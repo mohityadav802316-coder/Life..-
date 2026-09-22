@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Outer segmented progress track ring -->
+    <path
+        android:pathData="M54,32 A22,22 0 1,1 32,54"
+        android:strokeColor="#00F2FE"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M32,54 A22,22 0 0,1 42,34"
+        android:strokeColor="#7F00FF"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+
+    <!-- Stylized Checkmark / Horizon Star in center -->
+    <path
+        android:pathData="M45,54 L51,60 L64,47"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="3.2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+
+    <!-- Precision crosshairs accents -->
+    <path
+        android:pathData="M54,23 L54,27 M54,81 L54,85 M23,54 L27,54 M81,54 L85,54"
+        android:strokeColor="#00E5FF"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round" />
+</vector>
