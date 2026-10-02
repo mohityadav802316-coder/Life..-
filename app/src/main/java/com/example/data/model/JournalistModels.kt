@@ -1,6 +1,7 @@
 package com.example.data.model
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 import androidx.room.TypeConverter
 
@@ -26,7 +27,10 @@ data class JournalistPersonEntity(
   val createdAt: Long = System.currentTimeMillis()
 )
 
-@Entity(tableName = "journalist_entries")
+@Entity(
+  tableName = "journalist_entries",
+  indices = [Index(value = ["date"]), Index(value = ["personId"])]
+)
 data class JournalistEntryEntity(
   @PrimaryKey val id: String, // unique id UUID
   val personId: String,

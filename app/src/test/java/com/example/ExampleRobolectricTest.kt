@@ -72,4 +72,44 @@ class ExampleRobolectricTest {
 
     db.close()
   }
+
+  @Test
+  fun `verify MeditationManager session lifecycle and state transitions`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val manager = com.example.meditation.MeditationManager.getInstance(context)
+
+    // Initial state check
+    manager.stopSession(savePartial = false)
+    org.junit.Assert.assertFalse(manager.state.value.isActive)
+
+    // 1. Begin Session (Breathing 10 min)
+    manager.startSession(
+      type = com.example.data.model.MeditationType.BREATHING,
+      durationMinutes = 10,
+      userName = "मोहित",
+      chimeEnabled = false,
+      voiceLanguage = "HI"
+    )
+
+    val activeState = manager.state.value
+    org.junit.Assert.assertTrue("Session must be active after start", activeState.isActive)
+    org.junit.Assert.assertTrue("Session must be playing after start", activeState.isPlaying)
+    assertEquals(com.example.data.model.MeditationType.BREATHING, activeState.type)
+    assertEquals(600, activeState.targetDurationSeconds)
+    assertEquals(com.example.data.model.BreathPhase.INHALE, activeState.currentPhase)
+
+    // 2. Pause Session
+    manager.pauseSession()
+    org.junit.Assert.assertTrue(manager.state.value.isActive)
+    org.junit.Assert.assertFalse("Session must be paused", manager.state.value.isPlaying)
+
+    // 3. Resume Session
+    manager.resumeSession()
+    org.junit.Assert.assertTrue("Session must resume playing", manager.state.value.isPlaying)
+
+    // 4. Stop Session
+    manager.stopSession(savePartial = false)
+    org.junit.Assert.assertFalse("Session must be inactive after stop", manager.state.value.isActive)
+    org.junit.Assert.assertFalse("Session must not be playing after stop", manager.state.value.isPlaying)
+  }
 }

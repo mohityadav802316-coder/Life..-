@@ -1,22 +1,30 @@
 package com.example.data.repository
 
+import com.example.data.db.DailyNoteDao
 import com.example.data.db.DailySnapshotDao
 import com.example.data.db.GoalDao
 import com.example.data.db.JournalistEntryDao
 import com.example.data.db.JournalistPersonDao
 import com.example.data.db.LifeTrackerDatabase
+import com.example.data.db.MeditationDao
 import com.example.data.db.ReflectionDao
 import com.example.data.db.RoutineDao
 import com.example.data.db.TaskDao
 import com.example.data.db.UserSettingsDao
+import com.example.data.model.CategoryAggregate
+import com.example.data.model.CycleDayAverage
+import com.example.data.model.DailyNoteEntity
 import com.example.data.model.DailySnapshotEntity
 import com.example.data.model.DaySummary
 import com.example.data.model.DayTaskEntity
 import com.example.data.model.GoalEntity
 import com.example.data.model.JournalistEntryEntity
 import com.example.data.model.JournalistPersonEntity
+import com.example.data.model.MeditationSessionEntity
+import com.example.data.model.OverallStats
 import com.example.data.model.ReflectionEntity
 import com.example.data.model.RoutineTemplateEntity
+import com.example.data.model.TaskPriority
 import com.example.data.model.TaskStatus
 import com.example.data.model.UserSettingsEntity
 import com.example.util.TimeUtils
@@ -37,6 +45,11 @@ class LifeTrackerRepository(private val database: LifeTrackerDatabase) {
   val dailySnapshotDao: DailySnapshotDao = database.dailySnapshotDao()
   val journalistPersonDao: JournalistPersonDao = database.journalistPersonDao()
   val journalistEntryDao: JournalistEntryDao = database.journalistEntryDao()
+  val dailyNoteDao: DailyNoteDao = database.dailyNoteDao()
+  val meditationDao: MeditationDao = database.meditationDao()
+  val musicDao: com.example.data.db.MusicDao = database.musicDao()
+  val dailyChallengeDao: com.example.data.db.DailyChallengeDao = database.dailyChallengeDao()
+  val shortContentDao: com.example.data.db.ShortContentDao = database.shortContentDao()
 
   /**
    * Safe SQLite write with automatic retry to guarantee persistence
@@ -131,7 +144,8 @@ class LifeTrackerRepository(private val database: LifeTrackerDatabase) {
           status = TaskStatus.MISSED,
           notes = template.notes,
           isExtra = false,
-          orderIndex = index
+          orderIndex = index,
+          priority = template.priority
         )
       }
       if (newTasks.isNotEmpty()) {
@@ -191,6 +205,12 @@ class LifeTrackerRepository(private val database: LifeTrackerDatabase) {
 
   fun getAllDailySnapshots(): Flow<List<DailySnapshotEntity>> = dailySnapshotDao.getAllSnapshots()
 
+  fun getOverallStats(): Flow<OverallStats> = dailySnapshotDao.getOverallStats()
+
+  fun getCycleDayAverages(): Flow<List<CycleDayAverage>> = dailySnapshotDao.getCycleDayAverages()
+
+  fun getCategoryAggregates(): Flow<List<CategoryAggregate>> = taskDao.getCategoryAggregates()
+
   fun getDaySummary(date: String, cycleDay: Int): Flow<DaySummary> {
     return taskDao.getTasksForDate(date).map { tasks ->
       val total = tasks.size
@@ -245,10 +265,14 @@ class LifeTrackerRepository(private val database: LifeTrackerDatabase) {
   // Routine templates
   fun getAllRoutineTemplates(): Flow<List<RoutineTemplateEntity>> = routineDao.getAllRoutineTemplates()
 
-  suspend fun insertRoutineTemplate(item: RoutineTemplateEntity) = withContext(Dispatchers.IO) {
+  suspend fun getRoutineTemplateById(id: Long): RoutineTemplateEntity? = withContext(Dispatchers.IO) {
+    routineDao.getRoutineTemplateById(id)
+  }
+
+  suspend fun insertRoutineTemplate(item: RoutineTemplateEntity): Long = withContext(Dispatchers.IO) {
     safeDbWrite {
       routineDao.insertRoutineTemplate(item)
-    }
+    }.getOrDefault(0L)
   }
 
   suspend fun updateRoutineTemplate(item: RoutineTemplateEntity) = withContext(Dispatchers.IO) {
@@ -260,6 +284,144 @@ class LifeTrackerRepository(private val database: LifeTrackerDatabase) {
   suspend fun deleteRoutineTemplate(id: Long) = withContext(Dispatchers.IO) {
     safeDbWrite {
       routineDao.deleteRoutineTemplateById(id)
+    }
+  }
+
+  /**
+   * Synchronizes today's day_tasks with customized routine templates in real time.
+   * If an existing task's template time or details were modified, updates today's task.
+   * If a new template was added, inserts it into today's task list.
+   * If a template was deleted or deactivated, removes it from today if uncompleted.
+   * Preserves user's historical records and completed statuses.
+   */
+  suspend fun syncTodayTasksWithTemplates(todayDate: String) = withContext(Dispatchers.IO) {
+    val activeTemplates = routineDao.getActiveTemplatesSync()
+    val existingTasks = taskDao.getTasksForDateSync(todayDate)
+
+    val settings = userSettingsDao.getSettingsSync()
+    val anchor = settings?.anchorDate ?: todayDate
+    val cycleDay = TimeUtils.calculateCycleDay(anchor, todayDate)
+    val maskBit = 1 shl (cycleDay - 1)
+    val applicableTemplates = activeTemplates.filter { (it.daysMask and maskBit) != 0 }
+
+    val activeTemplateMap = applicableTemplates.associateBy { it.id }
+    val existingLinkedTasks = existingTasks.filter { !it.isExtra && it.templateId != null }
+
+    safeDbWrite {
+      // 1. Update existing tasks linked to templates
+      for (task in existingLinkedTasks) {
+        val template = activeTemplateMap[task.templateId]
+        if (template != null) {
+          val updatedTask = task.copy(
+            name = template.name,
+            timeMinutes = template.timeMinutes,
+            category = template.category,
+            notes = template.notes,
+            orderIndex = template.orderIndex,
+            priority = template.priority
+          )
+          if (updatedTask != task) {
+            taskDao.updateTask(updatedTask)
+          }
+        } else {
+          // Template was removed or disabled. If not marked done, clean up from today
+          if (task.status == TaskStatus.MISSED) {
+            taskDao.deleteTask(task)
+          }
+        }
+      }
+
+      // 2. Insert any newly added active templates for today
+      val existingTemplateIds = existingTasks.mapNotNull { it.templateId }.toSet()
+      val newTasksToInsert = applicableTemplates
+        .filter { it.id !in existingTemplateIds }
+        .map { template ->
+          DayTaskEntity(
+            date = todayDate,
+            templateId = template.id,
+            name = template.name,
+            timeMinutes = template.timeMinutes,
+            category = template.category,
+            status = TaskStatus.MISSED,
+            notes = template.notes,
+            isExtra = false,
+            orderIndex = template.orderIndex,
+            priority = template.priority
+          )
+        }
+
+      if (newTasksToInsert.isNotEmpty()) {
+        taskDao.insertTasks(newTasksToInsert)
+      }
+    }
+
+    syncDailySnapshot(todayDate)
+  }
+
+  /**
+   * Feature 7: Restores today's routine tasks from the permanent routine templates
+   * without affecting historical data or extra tasks.
+   */
+  suspend fun restoreTodayTasksToDefault(date: String, cycleDay: Int) = withContext(Dispatchers.IO) {
+    safeDbWrite {
+      val existingTasks = taskDao.getTasksForDateSync(date)
+      // Delete existing routine tasks for this date
+      for (task in existingTasks) {
+        if (!task.isExtra) {
+          taskDao.deleteTask(task)
+        }
+      }
+      val templates = routineDao.getActiveTemplatesSync()
+      val maskBit = 1 shl (cycleDay - 1)
+      val applicableTemplates = templates.filter { (it.daysMask and maskBit) != 0 }
+      val newTasks = applicableTemplates.mapIndexed { index, template ->
+        DayTaskEntity(
+          date = date,
+          templateId = template.id,
+          name = template.name,
+          timeMinutes = template.timeMinutes,
+          category = template.category,
+          status = TaskStatus.MISSED,
+          notes = template.notes,
+          isExtra = false,
+          orderIndex = index,
+          priority = template.priority
+        )
+      }
+      if (newTasks.isNotEmpty()) {
+        taskDao.insertTasks(newTasks)
+      }
+    }
+    syncDailySnapshot(date)
+  }
+
+  // Feature 3: Daily Notes & Mood
+  fun getDailyNote(date: String): Flow<DailyNoteEntity?> = dailyNoteDao.getNoteForDate(date)
+
+  suspend fun getDailyNoteSync(date: String): DailyNoteEntity? = dailyNoteDao.getNoteForDateSync(date)
+
+  fun getAllDailyNotes(): Flow<List<DailyNoteEntity>> = dailyNoteDao.getAllNotes()
+
+  fun getDailyNotesBetweenDates(startDate: String, endDate: String): Flow<List<DailyNoteEntity>> =
+    dailyNoteDao.getNotesBetweenDates(startDate, endDate)
+
+  suspend fun saveDailyNote(date: String, note: String, mood: String) = withContext(Dispatchers.IO) {
+    safeDbWrite {
+      dailyNoteDao.insertOrUpdate(
+        DailyNoteEntity(
+          date = date,
+          note = note,
+          mood = mood,
+          updatedAt = System.currentTimeMillis()
+        )
+      )
+    }
+  }
+
+  suspend fun updateSmartReminderMinutes(minutes: Int) = withContext(Dispatchers.IO) {
+    safeDbWrite {
+      val current = userSettingsDao.getSettingsSync() ?: return@safeDbWrite
+      userSettingsDao.insertOrUpdate(current.copy(smartReminderMinutes = minutes))
     }
   }
 
@@ -381,6 +543,13 @@ class LifeTrackerRepository(private val database: LifeTrackerDatabase) {
     }
   }
 
+  suspend fun updateHapticFeedbackEnabled(enabled: Boolean) = withContext(Dispatchers.IO) {
+    val current = userSettingsDao.getSettingsSync() ?: UserSettingsEntity(anchorDate = TimeUtils.getTodayDateString())
+    safeDbWrite {
+      userSettingsDao.insertOrUpdate(current.copy(isHapticFeedbackEnabled = enabled))
+    }
+  }
+
   suspend fun updateAlarmSnoozeMinutes(snoozeMinutes: Int) = withContext(Dispatchers.IO) {
     val current = userSettingsDao.getSettingsSync() ?: UserSettingsEntity(anchorDate = TimeUtils.getTodayDateString())
     safeDbWrite {
@@ -447,5 +616,399 @@ class LifeTrackerRepository(private val database: LifeTrackerDatabase) {
     safeDbWrite {
       journalistEntryDao.deleteEntryById(id)
     }
+  }
+
+  // Meditation Persistence & Settings
+  fun getAllMeditationSessions(): Flow<List<MeditationSessionEntity>> =
+    meditationDao.getAllSessions()
+
+  fun getMeditationSessionsForDate(date: String): Flow<List<MeditationSessionEntity>> =
+    meditationDao.getSessionsForDate(date)
+
+  fun getMeditationSessionsBetweenDates(startDate: String, endDate: String): Flow<List<MeditationSessionEntity>> =
+    meditationDao.getSessionsBetweenDates(startDate, endDate)
+
+  suspend fun insertMeditationSession(session: MeditationSessionEntity): Long = withContext(Dispatchers.IO) {
+    var insertedId = 0L
+    safeDbWrite {
+      insertedId = meditationDao.insertSession(session)
+    }
+    insertedId
+  }
+
+  suspend fun updateUserName(name: String) = withContext(Dispatchers.IO) {
+    safeDbWrite {
+      val current = userSettingsDao.getSettingsSync() ?: return@safeDbWrite
+      userSettingsDao.insertOrUpdate(current.copy(userName = name.trim()))
+    }
+  }
+
+  suspend fun updateMeditationSettings(chimeEnabled: Boolean, language: String) = withContext(Dispatchers.IO) {
+    safeDbWrite {
+      val current = userSettingsDao.getSettingsSync() ?: return@safeDbWrite
+      userSettingsDao.insertOrUpdate(current.copy(meditationChimeEnabled = chimeEnabled, meditationVoiceLanguage = language))
+    }
+  }
+
+  suspend fun updateFeatureToggle(feature: String, enabled: Boolean) = withContext(Dispatchers.IO) {
+    safeDbWrite {
+      val current = userSettingsDao.getSettingsSync() ?: return@safeDbWrite
+      val updated = when (feature) {
+        "QUICK_ADD" -> current.copy(enableQuickAdd = enabled)
+        "MORNING_BRIEF" -> current.copy(enableMorningBrief = enabled)
+        "LIFE_TIMELINE" -> current.copy(enableLifeTimeline = enabled)
+        "PERSONAL_INSIGHTS" -> current.copy(enablePersonalInsights = enabled)
+        "RECOVERY_MODE" -> current.copy(enableRecoveryMode = enabled)
+        else -> current
+      }
+      userSettingsDao.insertOrUpdate(updated)
+    }
+  }
+
+  suspend fun applyEmergencyRecoveryTasks(targetDate: String) = withContext(Dispatchers.IO) {
+    safeDbWrite {
+      val recoveryTasks = listOf(
+        DayTaskEntity(
+          date = targetDate,
+          templateId = null,
+          name = "🌅 Gentle Wake Up & Hydration",
+          timeMinutes = 330, // 5:30 AM
+          category = "Health",
+          status = TaskStatus.MISSED,
+          notes = "Recovery Mode: Drink warm water, stretch gently without rush",
+          isExtra = true,
+          orderIndex = 1,
+          priority = "IMPORTANT"
+        ),
+        DayTaskEntity(
+          date = targetDate,
+          templateId = null,
+          name = "🧘 10 Min Breathing Meditation (श्वास ध्यान)",
+          timeMinutes = 360, // 6:00 AM
+          category = "Mindfulness",
+          status = TaskStatus.MISSED,
+          notes = "Recovery Mode: Calming box breathing to reset nervous system",
+          isExtra = true,
+          orderIndex = 2,
+          priority = "HIGH"
+        ),
+        DayTaskEntity(
+          date = targetDate,
+          templateId = null,
+          name = "🎯 One Essential Priority Focus",
+          timeMinutes = 570, // 9:30 AM
+          category = "Deep Work",
+          status = TaskStatus.MISSED,
+          notes = "Recovery Mode: Focus on just 1 critical goal today to regain momentum",
+          isExtra = true,
+          orderIndex = 3,
+          priority = "HIGH"
+        ),
+        DayTaskEntity(
+          date = targetDate,
+          templateId = null,
+          name = "🚶 Restorative Walk & Fresh Air",
+          timeMinutes = 1050, // 5:30 PM
+          category = "Health",
+          status = TaskStatus.MISSED,
+          notes = "Recovery Mode: 20 min mindful outdoor walking",
+          isExtra = true,
+          orderIndex = 4,
+          priority = "NORMAL"
+        ),
+        DayTaskEntity(
+          date = targetDate,
+          templateId = null,
+          name = "🌙 Early Restorative Sleep",
+          timeMinutes = 1320, // 10:00 PM
+          category = "Sleep",
+          status = TaskStatus.MISSED,
+          notes = "Recovery Mode: Sleep early to rebuild physical and mental energy",
+          isExtra = true,
+          orderIndex = 5,
+          priority = "IMPORTANT"
+        )
+      )
+      taskDao.insertTasks(recoveryTasks)
+    }
+  }
+
+  // Energy Mode Persistence
+  suspend fun updateDailyEnergyMode(mode: String, date: String) = withContext(Dispatchers.IO) {
+    safeDbWrite {
+      val s = userSettingsDao.getSettingsSync() ?: UserSettingsEntity(anchorDate = TimeUtils.getTodayDateString())
+      userSettingsDao.insertOrUpdate(
+        s.copy(
+          dailyEnergyMode = mode,
+          dailyEnergyModeDate = date
+        )
+      )
+    }
+  }
+
+  suspend fun updateDailyChallengeEnabled(enabled: Boolean) = withContext(Dispatchers.IO) {
+    safeDbWrite {
+      val s = userSettingsDao.getSettingsSync() ?: UserSettingsEntity(anchorDate = TimeUtils.getTodayDateString())
+      userSettingsDao.insertOrUpdate(s.copy(dailyChallengeEnabled = enabled))
+    }
+  }
+
+  suspend fun updateMusicAutoRoutineEnabled(enabled: Boolean) = withContext(Dispatchers.IO) {
+    safeDbWrite {
+      val s = userSettingsDao.getSettingsSync() ?: UserSettingsEntity(anchorDate = TimeUtils.getTodayDateString())
+      userSettingsDao.insertOrUpdate(s.copy(musicAutoRoutineEnabled = enabled))
+    }
+  }
+
+  // Daily Challenge Methods
+  fun getDailyChallengeFlow(date: String) = dailyChallengeDao.getChallengeForDate(date)
+
+  suspend fun getOrCreateTodayChallenge(context: android.content.Context, date: String) =
+    com.example.challenge.DailyChallengeManager.getOrCreateTodayChallenge(context, date)
+
+  suspend fun markDailyChallengeComplete(context: android.content.Context, date: String) =
+    com.example.challenge.DailyChallengeManager.completeChallenge(context, date)
+
+  suspend fun skipDailyChallenge(context: android.content.Context, date: String) =
+    com.example.challenge.DailyChallengeManager.skipOrSwapChallenge(context, date)
+
+  // Music System Methods
+  fun getAllSongsFlow() = musicDao.getAllSongs()
+  fun getFavoriteSongsFlow() = musicDao.getFavoriteSongs()
+  fun getRecentlyPlayedSongsFlow() = musicDao.getRecentlyPlayedSongs()
+  fun getAllPlaylistsFlow() = musicDao.getAllPlaylists()
+  fun getSongsForPlaylistFlow(playlistId: Long) = musicDao.getSongsForPlaylist(playlistId)
+  fun getAllPlaylistRulesFlow() = musicDao.getAllRules()
+
+  suspend fun createPlaylist(name: String, description: String, colorHex: String): Long {
+    return musicDao.insertPlaylist(
+      com.example.data.model.PlaylistEntity(
+        name = name.trim(),
+        description = description.trim(),
+        colorHex = colorHex
+      )
+    )
+  }
+
+  suspend fun deletePlaylist(playlistId: Long) {
+    musicDao.clearPlaylistSongs(playlistId)
+    musicDao.deletePlaylist(playlistId)
+  }
+
+  suspend fun addSongToPlaylist(playlistId: Long, songId: String) {
+    musicDao.addSongToPlaylist(
+      com.example.data.model.PlaylistSongCrossRef(
+        playlistId = playlistId,
+        songId = songId
+      )
+    )
+  }
+
+  suspend fun removeSongFromPlaylist(playlistId: Long, songId: String) {
+    musicDao.removeSongFromPlaylist(playlistId, songId)
+  }
+
+  suspend fun addPlaylistRule(rule: com.example.data.model.PlaylistRuleEntity): Long {
+    return musicDao.insertRule(rule)
+  }
+
+  suspend fun deletePlaylistRule(ruleId: Long) {
+    musicDao.deleteRule(ruleId)
+  }
+
+  suspend fun toggleSongFavorite(songId: String, isFav: Boolean) {
+    musicDao.updateFavoriteStatus(songId, isFav)
+  }
+
+  // --- SHORT CONTENT TRACKER METHODS ---
+
+  fun getTodayShortContentSummary(date: String): Flow<com.example.data.model.ShortContentDailySummaryEntity?> {
+    return shortContentDao.getDailySummary(date)
+  }
+
+  suspend fun getTodayShortContentSummaryDirect(date: String): com.example.data.model.ShortContentDailySummaryEntity? {
+    return shortContentDao.getDailySummaryDirect(date)
+  }
+
+  fun getShortContentSummariesBetween(startDate: String, endDate: String): Flow<List<com.example.data.model.ShortContentDailySummaryEntity>> {
+    return shortContentDao.getSummariesBetween(startDate, endDate)
+  }
+
+  fun getAllShortContentSummaries(): Flow<List<com.example.data.model.ShortContentDailySummaryEntity>> {
+    return shortContentDao.getAllSummaries()
+  }
+
+  suspend fun updateShortContentSettings(
+    limit: Int,
+    w50: Boolean,
+    w80: Boolean,
+    w100: Boolean,
+    focusLock: Boolean,
+    enabled: Boolean
+  ) = safeDbWrite {
+    val current = userSettingsDao.getSettingsDirect() ?: UserSettingsEntity(anchorDate = TimeUtils.getTodayDateString())
+    val updated = current.copy(
+      shortDailyLimit = limit,
+      shortWarning50Enabled = w50,
+      shortWarning80Enabled = w80,
+      shortWarning100Enabled = w100,
+      shortFocusLockIntegration = focusLock,
+      shortTrackingEnabled = enabled
+    )
+    userSettingsDao.insertOrUpdate(updated)
+
+    // Also update today's summary limit if it exists
+    val today = TimeUtils.getTodayDateString()
+    val todaySummary = shortContentDao.getDailySummaryDirect(today)
+    if (todaySummary != null) {
+      shortContentDao.insertOrUpdateSummary(todaySummary.copy(dailyLimit = limit))
+    }
+  }
+
+  suspend fun resetShortContentToday(date: String) = safeDbWrite {
+    val current = shortContentDao.getDailySummaryDirect(date)
+    val settings = userSettingsDao.getSettingsDirect()
+    val limit = settings?.shortDailyLimit ?: 20
+    val reset = com.example.data.model.ShortContentDailySummaryEntity(
+      date = date,
+      instagramCount = 0,
+      youtubeCount = 0,
+      facebookCount = 0,
+      otherCount = 0,
+      totalCount = 0,
+      totalTimeSeconds = 0L,
+      dailyLimit = limit,
+      lastUpdated = System.currentTimeMillis()
+    )
+    shortContentDao.insertOrUpdateSummary(reset)
+  }
+
+  fun calculateShortContentPeriodStats(summaries: List<com.example.data.model.ShortContentDailySummaryEntity>): com.example.data.model.ShortContentPeriodStats {
+    if (summaries.isEmpty()) return com.example.data.model.ShortContentPeriodStats()
+    val totalCount = summaries.sumOf { it.totalCount }
+    val totalSeconds = summaries.sumOf { it.totalTimeSeconds }
+    val ig = summaries.sumOf { it.instagramCount }
+    val yt = summaries.sumOf { it.youtubeCount }
+    val fb = summaries.sumOf { it.facebookCount }
+    val other = summaries.sumOf { it.otherCount }
+    val activeDays = summaries.count { it.totalCount > 0 }
+    val limitExceeded = summaries.count { it.isLimitReached }
+    val avg = if (summaries.isNotEmpty()) totalCount.toFloat() / summaries.size.toFloat() else 0f
+
+    return com.example.data.model.ShortContentPeriodStats(
+      totalCount = totalCount,
+      totalTimeMinutes = (totalSeconds / 60).toInt(),
+      instagramCount = ig,
+      youtubeCount = yt,
+      facebookCount = fb,
+      otherCount = other,
+      daysActive = activeDays,
+      dailyAverageCount = avg,
+      limitExceededDays = limitExceeded
+    )
+  }
+
+  // --- PERSONAL DASHBOARD BUILDER METHODS ---
+
+  suspend fun updateDashboardConfiguration(
+    preset: String,
+    orderedSections: String,
+    disabledSections: String
+  ) = safeDbWrite {
+    val current = userSettingsDao.getSettingsDirect() ?: UserSettingsEntity(anchorDate = TimeUtils.getTodayDateString())
+    val updated = current.copy(
+      dashboardPreset = preset,
+      dashboardSectionsOrder = orderedSections,
+      dashboardDisabledSections = disabledSections
+    )
+    userSettingsDao.insertOrUpdate(updated)
+  }
+
+  // --- FOCUS / PHONE RESTRICTION MODE METHODS ---
+
+  suspend fun updateFocusModeActive(isActive: Boolean) = safeDbWrite {
+    val current = userSettingsDao.getSettingsDirect() ?: UserSettingsEntity(anchorDate = TimeUtils.getTodayDateString())
+    userSettingsDao.insertOrUpdate(current.copy(isFocusModeActive = isActive))
+  }
+
+  suspend fun updateFocusSchedule(
+    isEnabled: Boolean,
+    startTimeMinutes: Int,
+    endTimeMinutes: Int
+  ) = safeDbWrite {
+    val current = userSettingsDao.getSettingsDirect() ?: UserSettingsEntity(anchorDate = TimeUtils.getTodayDateString())
+    val updated = current.copy(
+      isFocusScheduleEnabled = isEnabled,
+      focusStartTimeMinutes = startTimeMinutes,
+      focusEndTimeMinutes = endTimeMinutes
+    )
+    userSettingsDao.insertOrUpdate(updated)
+  }
+
+  // --- SYSTEM-WIDE OLED BLACK SCREEN MODE METHODS ---
+
+  suspend fun updateBlackScreenEnabled(isEnabled: Boolean) = safeDbWrite {
+    val current = userSettingsDao.getSettingsDirect() ?: UserSettingsEntity(anchorDate = TimeUtils.getTodayDateString())
+    userSettingsDao.insertOrUpdate(current.copy(isBlackScreenEnabled = isEnabled))
+  }
+
+  suspend fun updateBlackScreenOverlayActive(isActive: Boolean) = safeDbWrite {
+    val current = userSettingsDao.getSettingsDirect() ?: UserSettingsEntity(anchorDate = TimeUtils.getTodayDateString())
+    userSettingsDao.insertOrUpdate(current.copy(isBlackScreenOverlayActive = isActive))
+  }
+
+  suspend fun updateBlackScreenFloatingDotEnabled(isEnabled: Boolean) = safeDbWrite {
+    val current = userSettingsDao.getSettingsDirect() ?: UserSettingsEntity(anchorDate = TimeUtils.getTodayDateString())
+    userSettingsDao.insertOrUpdate(current.copy(isFloatingDotEnabled = isEnabled))
+  }
+
+  suspend fun updateBlackScreenDotPosition(x: Int, y: Int) = safeDbWrite {
+    val current = userSettingsDao.getSettingsDirect() ?: UserSettingsEntity(anchorDate = TimeUtils.getTodayDateString())
+    userSettingsDao.insertOrUpdate(current.copy(blackScreenDotX = x, blackScreenDotY = y))
+  }
+
+  suspend fun updateBlackScreenDotSize(size: Int) = safeDbWrite {
+    val current = userSettingsDao.getSettingsDirect() ?: UserSettingsEntity(anchorDate = TimeUtils.getTodayDateString())
+    userSettingsDao.insertOrUpdate(current.copy(blackScreenDotSize = size))
+  }
+
+  suspend fun updateBlackScreenDotOpacity(opacity: Float) = safeDbWrite {
+    val current = userSettingsDao.getSettingsDirect() ?: UserSettingsEntity(anchorDate = TimeUtils.getTodayDateString())
+    userSettingsDao.insertOrUpdate(current.copy(blackScreenDotOpacity = opacity))
+  }
+
+  suspend fun updateBlackScreenActivationMethod(method: String) = safeDbWrite {
+    val current = userSettingsDao.getSettingsDirect() ?: UserSettingsEntity(anchorDate = TimeUtils.getTodayDateString())
+    userSettingsDao.insertOrUpdate(current.copy(blackScreenActivationMethod = method))
+  }
+
+  suspend fun updateBlackScreenExitGesture(gesture: String) = safeDbWrite {
+    val current = userSettingsDao.getSettingsDirect() ?: UserSettingsEntity(anchorDate = TimeUtils.getTodayDateString())
+    userSettingsDao.insertOrUpdate(current.copy(blackScreenExitGesture = gesture))
+  }
+
+  suspend fun updateBlackScreenGestureSensitivity(sensitivity: Float) = safeDbWrite {
+    val current = userSettingsDao.getSettingsDirect() ?: UserSettingsEntity(anchorDate = TimeUtils.getTodayDateString())
+    userSettingsDao.insertOrUpdate(current.copy(blackScreenGestureSensitivity = sensitivity))
+  }
+
+  suspend fun updateBlackScreenShowClock(show: Boolean) = safeDbWrite {
+    val current = userSettingsDao.getSettingsDirect() ?: UserSettingsEntity(anchorDate = TimeUtils.getTodayDateString())
+    userSettingsDao.insertOrUpdate(current.copy(blackScreenShowClock = show))
+  }
+
+  suspend fun updateBlackScreenClockFormat24(is24Hour: Boolean) = safeDbWrite {
+    val current = userSettingsDao.getSettingsDirect() ?: UserSettingsEntity(anchorDate = TimeUtils.getTodayDateString())
+    userSettingsDao.insertOrUpdate(current.copy(blackScreenClockFormat24 = is24Hour))
+  }
+
+  suspend fun updateBlackScreenRestoreAfterUnlock(restore: Boolean) = safeDbWrite {
+    val current = userSettingsDao.getSettingsDirect() ?: UserSettingsEntity(anchorDate = TimeUtils.getTodayDateString())
+    userSettingsDao.insertOrUpdate(current.copy(blackScreenRestoreAfterUnlock = restore))
+  }
+
+  suspend fun updateBlackScreenRestoreAfterReboot(restore: Boolean) = safeDbWrite {
+    val current = userSettingsDao.getSettingsDirect() ?: UserSettingsEntity(anchorDate = TimeUtils.getTodayDateString())
+    userSettingsDao.insertOrUpdate(current.copy(blackScreenRestoreAfterReboot = restore))
   }
 }

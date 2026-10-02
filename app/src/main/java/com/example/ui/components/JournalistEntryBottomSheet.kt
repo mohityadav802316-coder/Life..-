@@ -18,11 +18,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -79,22 +81,23 @@ fun JournalistEntryBottomSheet(
 ) {
   val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-  var selectedPersonId by remember {
+  var selectedPersonId by remember(initialEntry) {
     mutableStateOf(initialEntry?.personId ?: defaultPersonId)
   }
-  var category by remember {
+  var category by remember(initialEntry) {
     mutableStateOf(initialEntry?.category ?: JournalistCategory.OBSERVATION)
   }
-  var text by remember { mutableStateOf(initialEntry?.text ?: "") }
-  var dateStr by remember {
+  var text by remember(initialEntry) { mutableStateOf(initialEntry?.text ?: "") }
+  var dateStr by remember(initialEntry) {
     mutableStateOf(initialEntry?.date ?: TimeUtils.getTodayDateString())
   }
-  var timeStr by remember {
+  var timeStr by remember(initialEntry) {
     mutableStateOf(initialEntry?.time ?: TimeUtils.getCurrentTimeString())
   }
-  var contextStr by remember { mutableStateOf(initialEntry?.context ?: "") }
-  var intensityStr by remember { mutableStateOf(initialEntry?.intensity ?: "") }
+  var contextStr by remember(initialEntry) { mutableStateOf(initialEntry?.context ?: "") }
+  var intensityStr by remember(initialEntry) { mutableStateOf(initialEntry?.intensity ?: "") }
   var isError by remember { mutableStateOf(false) }
+  var showTimePicker by remember { mutableStateOf(false) }
 
   val contextOptions = listOf("घर", "ऑफिस", "दोस्त", "अकेला", "यात्रा", "सोशल मीडिया", "अन्य")
   val intensityOptions = listOf("हल्का", "मध्यम", "गहरा")
@@ -329,6 +332,19 @@ fun JournalistEntryBottomSheet(
           value = timeStr,
           onValueChange = { timeStr = it },
           label = { Text("Time (HH:mm)", fontSize = 11.sp) },
+          trailingIcon = {
+            IconButton(
+              onClick = { showTimePicker = true },
+              modifier = Modifier.size(36.dp)
+            ) {
+              Icon(
+                imageVector = Icons.Default.AccessTime,
+                contentDescription = "Pick Time",
+                tint = CyanNeon,
+                modifier = Modifier.size(18.dp)
+              )
+            }
+          },
           colors = OutlinedTextFieldDefaults.colors(
             focusedContainerColor = DarkSurfaceElevated,
             unfocusedContainerColor = DarkSurfaceElevated,
@@ -343,15 +359,41 @@ fun JournalistEntryBottomSheet(
         )
       }
 
-      // Natural Hindi Time Preview
-      Spacer(modifier = Modifier.height(4.dp))
-      val timeHindiPreview = TimeUtils.timeStringToHindi(timeStr)
-      Text(
-        text = "समय प्रारूप: $timeHindiPreview",
-        color = CyanNeon.copy(alpha = 0.85f),
-        fontSize = 11.sp,
-        fontWeight = FontWeight.Medium
-      )
+      // Natural Hindi Time Preview & Quick "Now" button
+      Spacer(modifier = Modifier.height(6.dp))
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+      ) {
+        val timeHindiPreview = TimeUtils.timeStringToHindi(timeStr)
+        Text(
+          text = "समय प्रारूप: $timeHindiPreview",
+          color = CyanNeon.copy(alpha = 0.85f),
+          fontSize = 11.sp,
+          fontWeight = FontWeight.Medium
+        )
+
+        Box(
+          modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(CyanNeon.copy(alpha = 0.12f))
+            .border(0.5.dp, CyanNeon.copy(alpha = 0.4f), RoundedCornerShape(6.dp))
+            .clickable {
+              timeStr = TimeUtils.getCurrentTimeString()
+              dateStr = TimeUtils.getTodayDateString()
+            }
+            .padding(horizontal = 8.dp, vertical = 3.dp)
+            .testTag("btn_journalist_set_now")
+        ) {
+          Text(
+            text = "🕒 अभी का समय (Now)",
+            color = CyanNeon,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold
+          )
+        }
+      }
 
       Spacer(modifier = Modifier.height(14.dp))
 
@@ -481,5 +523,26 @@ fun JournalistEntryBottomSheet(
         }
       }
     }
+  }
+
+  if (showTimePicker) {
+    val parts = timeStr.trim().split(":")
+    val parsedMinutes = if (parts.size >= 2) {
+      val h = parts[0].toIntOrNull() ?: 12
+      val m = parts[1].toIntOrNull() ?: 0
+      (h * 60 + m) % 1440
+    } else {
+      TimeUtils.getCurrentMinutes()
+    }
+    TimePickerDialog12Hour(
+      initialMinutes = parsedMinutes,
+      onDismiss = { showTimePicker = false },
+      onConfirm = { chosenMinutes ->
+        val h = chosenMinutes / 60
+        val m = chosenMinutes % 60
+        timeStr = String.format(java.util.Locale.US, "%02d:%02d", h, m)
+        showTimePicker = false
+      }
+    )
   }
 }

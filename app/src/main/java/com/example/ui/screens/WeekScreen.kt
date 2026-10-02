@@ -6,6 +6,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,18 +21,24 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -82,13 +89,91 @@ fun WeekScreen(
   val startDate = cycleSummaries.firstOrNull()?.date ?: ""
   val endDate = cycleSummaries.lastOrNull()?.date ?: ""
 
+  val listState = rememberLazyListState()
+  var hasAutoScrolled by remember { mutableStateOf(false) }
+  var userHasScrolled by remember { mutableStateOf(false) }
+  var isAutoScrolling by remember { mutableStateOf(false) }
+
+  // Detect when user manually drags or touches the list to scroll
+  LaunchedEffect(listState.interactionSource) {
+    listState.interactionSource.interactions.collect { interaction ->
+      if (interaction is DragInteraction.Start) {
+        userHasScrolled = true
+      }
+    }
+  }
+
+  // Detect manual scroll in progress
+  LaunchedEffect(listState.isScrollInProgress) {
+    if (listState.isScrollInProgress && !isAutoScrolling) {
+      userHasScrolled = true
+    }
+  }
+
+  // Auto-scroll to today's block in Cycle Screen
+  LaunchedEffect(cycleSummaries) {
+    if (cycleSummaries.isEmpty() || hasAutoScrolled || userHasScrolled) return@LaunchedEffect
+
+    val todayIndex = cycleSummaries.indexOfFirst { it.date == todayDate }
+    if (todayIndex >= 0) {
+      val targetItemIndex = 1 + todayIndex // 1 for the dashboard banner item
+      hasAutoScrolled = true
+      isAutoScrolling = true
+      try {
+        listState.animateScrollToItem(targetItemIndex)
+      } catch (_: Exception) {
+        listState.scrollToItem(targetItemIndex)
+      } finally {
+        isAutoScrolling = false
+      }
+    }
+  }
+
   LazyColumn(
+    state = listState,
     modifier = modifier
       .fillMaxSize()
       .background(DarkBackground),
     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 100.dp),
     verticalArrangement = Arrangement.spacedBy(12.dp)
   ) {
+    // 0. Top Bar with Back Button
+    item {
+      Row(
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+      ) {
+        IconButton(
+          onClick = { viewModel.navigateBack() },
+          modifier = Modifier.size(38.dp)
+        ) {
+          Icon(
+            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+            contentDescription = "Back",
+            tint = TextPrimary
+          )
+        }
+        Spacer(modifier = Modifier.width(8.dp))
+        Column {
+          Text(
+            text = "CYCLE REPORT • साप्ताहिक रिपोर्ट",
+            color = CyanNeon,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 1.sp
+          )
+          Text(
+            text = "7-Day Cycle Archive",
+            color = TextPrimary,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Bold
+          )
+        }
+      }
+    }
+
     // 1. Cycle Dashboard Banner & Historical Archive Navigation
     item {
       Box(
@@ -148,19 +233,26 @@ fun WeekScreen(
                 )
               }
 
+              val canGoNextCycle = cycleSummaries.isNotEmpty() && cycleSummaries.last().date < todayDate
+
               IconButton(
                 onClick = { viewModel.navigateCycle(1) },
+                enabled = canGoNextCycle,
                 modifier = Modifier
                   .size(34.dp)
                   .clip(CircleShape)
-                  .background(DarkSurface)
-                  .border(1.dp, DarkSurfaceBorder, CircleShape)
+                  .background(if (canGoNextCycle) DarkSurface else DarkSurface.copy(alpha = 0.35f))
+                  .border(
+                    1.dp,
+                    if (canGoNextCycle) DarkSurfaceBorder else DarkSurfaceBorder.copy(alpha = 0.25f),
+                    CircleShape
+                  )
                   .testTag("next_cycle_button")
               ) {
                 Icon(
                   imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                  contentDescription = "Next Cycle",
-                  tint = TextSecondary,
+                  contentDescription = if (canGoNextCycle) "Next Cycle" else "Next Cycle (Locked)",
+                  tint = if (canGoNextCycle) TextSecondary else TextMuted.copy(alpha = 0.3f),
                   modifier = Modifier.size(16.dp)
                 )
               }
@@ -198,18 +290,22 @@ fun WeekScreen(
       }
     }
 
-    // 2. 7-Day Cards with Circular/Arc Progress
+    // 2. 7-Day Cards with Circular/Arc Progress (Only today and past days clickable)
     items(cycleSummaries, key = { it.date }) { daySummary ->
       val isToday = daySummary.date == todayDate
       val isSelected = daySummary.date == selectedDate
+      val isFutureDay = daySummary.date > todayDate
 
       WeekDayArcCard(
         summary = daySummary,
         isToday = isToday,
         isSelected = isSelected,
+        isFutureDay = isFutureDay,
         onClick = {
-          viewModel.selectDate(daySummary.date)
-          viewModel.setTab(MainTab.TODAY)
+          if (!isFutureDay) {
+            viewModel.selectDate(daySummary.date)
+            viewModel.setTab(MainTab.TODAY)
+          }
         }
       )
     }
@@ -221,35 +317,43 @@ private fun WeekDayArcCard(
   summary: DaySummary,
   isToday: Boolean,
   isSelected: Boolean,
+  isFutureDay: Boolean,
   onClick: () -> Unit
 ) {
   val animatedProgress by animateFloatAsState(
-    targetValue = (summary.completionPercentage / 100f).coerceIn(0f, 1f),
+    targetValue = if (isFutureDay) 0f else (summary.completionPercentage / 100f).coerceIn(0f, 1f),
     animationSpec = tween(700),
     label = "progress"
   )
 
   val cardBorderBrush = when {
     isToday -> ActiveCardBorderGradient
+    isFutureDay -> Brush.linearGradient(listOf(DarkSurfaceBorder.copy(alpha = 0.35f), DarkSurfaceBorder.copy(alpha = 0.2f)))
     isSelected -> Brush.linearGradient(listOf(CyanNeon.copy(alpha = 0.6f), DarkSurfaceBorder))
     else -> CardBorderGradient
+  }
+
+  val cardBg = when {
+    isToday -> DarkSurfaceElevated
+    isFutureDay -> DarkSurface.copy(alpha = 0.4f)
+    else -> DarkSurface
   }
 
   Box(
     modifier = Modifier
       .fillMaxWidth()
       .clip(RoundedCornerShape(18.dp))
-      .background(if (isToday) DarkSurfaceElevated else DarkSurface)
+      .background(cardBg)
       .border(if (isToday) 1.5.dp else 1.dp, cardBorderBrush, RoundedCornerShape(18.dp))
-      .clickable { onClick() }
+      .clickable(enabled = !isFutureDay) { onClick() }
       .padding(14.dp)
-      .testTag("week_day_${summary.dayOfCycle}")
+      .testTag(if (isFutureDay) "week_day_locked_${summary.dayOfCycle}" else "week_day_${summary.dayOfCycle}")
   ) {
     Row(
       modifier = Modifier.fillMaxWidth(),
       verticalAlignment = Alignment.CenterVertically
     ) {
-      // 1. Mini Circular Arc Progress Donut
+      // 1. Mini Circular Arc Progress Donut / Lock Indicator
       Box(
         modifier = Modifier.size(54.dp),
         contentAlignment = Alignment.Center
@@ -257,14 +361,14 @@ private fun WeekDayArcCard(
         Canvas(modifier = Modifier.size(48.dp)) {
           // Track
           drawArc(
-            color = DarkSurfaceBorder,
+            color = if (isFutureDay) DarkSurfaceBorder.copy(alpha = 0.4f) else DarkSurfaceBorder,
             startAngle = 135f,
             sweepAngle = 270f,
             useCenter = false,
             style = Stroke(width = 5.dp.toPx(), cap = StrokeCap.Round)
           )
           // Progress Arc
-          if (animatedProgress > 0f) {
+          if (!isFutureDay && animatedProgress > 0f) {
             drawArc(
               brush = Brush.sweepGradient(
                 listOf(CyanNeon, VioletGlow, CyanNeon)
@@ -276,12 +380,22 @@ private fun WeekDayArcCard(
             )
           }
         }
-        Text(
-          text = "${summary.completionPercentage}%",
-          color = TextPrimary,
-          fontSize = 11.sp,
-          fontWeight = FontWeight.Black
-        )
+
+        if (isFutureDay) {
+          Icon(
+            imageVector = Icons.Default.Lock,
+            contentDescription = "Day Locked",
+            tint = TextMuted.copy(alpha = 0.6f),
+            modifier = Modifier.size(16.dp)
+          )
+        } else {
+          Text(
+            text = "${summary.completionPercentage}%",
+            color = TextPrimary,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Black
+          )
+        }
       }
 
       Spacer(modifier = Modifier.width(14.dp))
@@ -296,12 +410,18 @@ private fun WeekDayArcCard(
           Box(
             modifier = Modifier
               .clip(RoundedCornerShape(6.dp))
-              .background(if (isToday) CyanNeon else DarkSurfaceBorder)
+              .background(
+                when {
+                  isToday -> CyanNeon
+                  isFutureDay -> DarkSurfaceBorder.copy(alpha = 0.5f)
+                  else -> DarkSurfaceBorder
+                }
+              )
               .padding(horizontal = 6.dp, vertical = 2.dp)
           ) {
             Text(
               text = "DAY ${summary.dayOfCycle}",
-              color = if (isToday) Color(0xFF00363D) else TextPrimary,
+              color = if (isToday) Color(0xFF00363D) else if (isFutureDay) TextMuted else TextPrimary,
               fontSize = 10.sp,
               fontWeight = FontWeight.Black
             )
@@ -309,7 +429,7 @@ private fun WeekDayArcCard(
 
           Text(
             text = TimeUtils.formatDateDisplay(summary.date),
-            color = TextPrimary,
+            color = if (isFutureDay) TextMuted else TextPrimary,
             fontSize = 14.sp,
             fontWeight = FontWeight.SemiBold
           )
@@ -325,38 +445,57 @@ private fun WeekDayArcCard(
                 .background(CyanNeon.copy(alpha = 0.15f))
                 .padding(horizontal = 5.dp, vertical = 2.dp)
             )
+          } else if (isFutureDay) {
+            Text(
+              text = "🔒 आगामी दिन (Locked)",
+              color = TextMuted,
+              fontSize = 9.sp,
+              fontWeight = FontWeight.Bold,
+              modifier = Modifier
+                .clip(RoundedCornerShape(4.dp))
+                .background(DarkSurfaceBorder.copy(alpha = 0.4f))
+                .padding(horizontal = 5.dp, vertical = 2.dp)
+            )
           }
         }
 
         Spacer(modifier = Modifier.height(6.dp))
 
-        // Small completion indicators
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.SpaceBetween,
-          verticalAlignment = Alignment.CenterVertically
-        ) {
-          Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("🟢 ${summary.completedCount}", color = StatusComplete, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-            Text("🟡 ${summary.partialCount}", color = StatusPartial, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-            Text("🔴 ${summary.missedCount}", color = StatusMissed, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-          }
-
+        // Small completion indicators or locked notice
+        if (isFutureDay) {
           Text(
-            text = String.format(java.util.Locale.US, "%.1f / %d pts", summary.totalScore, summary.totalTasks),
-            color = TextSecondary,
+            text = "समय आने पर ही टास्क अनलॉक होंगे",
+            color = TextMuted.copy(alpha = 0.7f),
             fontSize = 11.sp
           )
+        } else {
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+              Text("🟢 ${summary.completedCount}", color = StatusComplete, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+              Text("🟡 ${summary.partialCount}", color = StatusPartial, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+              Text("🔴 ${summary.missedCount}", color = StatusMissed, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
+
+            Text(
+              text = String.format(java.util.Locale.US, "%.1f / %d pts", summary.totalScore, summary.totalTasks),
+              color = TextSecondary,
+              fontSize = 11.sp
+            )
+          }
         }
       }
 
       Spacer(modifier = Modifier.width(6.dp))
 
       Icon(
-        imageVector = Icons.Default.ChevronRight,
-        contentDescription = "View Day",
-        tint = TextMuted,
-        modifier = Modifier.size(18.dp)
+        imageVector = if (isFutureDay) Icons.Default.Lock else Icons.Default.ChevronRight,
+        contentDescription = if (isFutureDay) "Day Locked" else "View Day",
+        tint = if (isFutureDay) TextMuted.copy(alpha = 0.4f) else TextMuted,
+        modifier = Modifier.size(16.dp)
       )
     }
   }

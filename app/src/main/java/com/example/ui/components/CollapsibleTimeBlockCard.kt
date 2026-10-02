@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -88,6 +89,7 @@ fun CollapsibleTimeBlockCard(
   onDeleteTask: (DayTaskEntity) -> Unit,
   currentTaskId: Long?,
   isCurrentBlock: Boolean,
+  isFutureBlock: Boolean = false,
   modifier: Modifier = Modifier
 ) {
   val totalTasks = block.tasks.size
@@ -96,37 +98,46 @@ fun CollapsibleTimeBlockCard(
   val allDone = totalTasks > 0 && completedTasks == totalTasks
 
   val arrowRotation by animateFloatAsState(
-    targetValue = if (isExpanded) 180f else 0f,
+    targetValue = if (isExpanded && !isFutureBlock) 180f else 0f,
     animationSpec = tween(durationMillis = 250),
     label = "arrowRotation"
   )
 
-  val borderBrush = if (isCurrentBlock) {
-    androidx.compose.ui.graphics.Brush.linearGradient(
+  val borderBrush = when {
+    isFutureBlock -> androidx.compose.ui.graphics.Brush.linearGradient(
+      listOf(DarkSurfaceBorder.copy(alpha = 0.35f), DarkSurfaceBorder.copy(alpha = 0.15f))
+    )
+    isCurrentBlock -> androidx.compose.ui.graphics.Brush.linearGradient(
       listOf(CyanNeon.copy(alpha = 0.7f), DarkSurfaceBorder)
     )
-  } else if (allDone) {
-    androidx.compose.ui.graphics.Brush.linearGradient(
+    allDone -> androidx.compose.ui.graphics.Brush.linearGradient(
       listOf(StatusComplete.copy(alpha = 0.5f), DarkSurfaceBorder)
     )
+    else -> CardBorderGradient
+  }
+
+  val cardBackgroundBrush = if (isFutureBlock) {
+    androidx.compose.ui.graphics.Brush.linearGradient(
+      listOf(DarkSurface.copy(alpha = 0.45f), DarkSurface.copy(alpha = 0.45f))
+    )
   } else {
-    CardBorderGradient
+    GlassGradient
   }
 
   Box(
     modifier = modifier
       .fillMaxWidth()
       .clip(RoundedCornerShape(18.dp))
-      .background(GlassGradient)
+      .background(cardBackgroundBrush)
       .border(1.dp, borderBrush, RoundedCornerShape(18.dp))
-      .testTag("time_block_${block.startMinutes}")
+      .testTag(if (isFutureBlock) "time_block_locked_${block.startMinutes}" else "time_block_${block.startMinutes}")
   ) {
     Column {
-      // 1. Collapsible Block Header Row ( हमेशा clickable )
+      // 1. Collapsible Block Header Row (Not clickable if future timetable)
       Row(
         modifier = Modifier
           .fillMaxWidth()
-          .clickable(onClick = onToggleExpand)
+          .clickable(enabled = !isFutureBlock, onClick = onToggleExpand)
           .padding(horizontal = 14.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
@@ -143,6 +154,7 @@ fun CollapsibleTimeBlockCard(
               .clip(CircleShape)
               .background(
                 when {
+                  isFutureBlock -> DarkSurfaceBorder.copy(alpha = 0.5f)
                   isCurrentBlock -> CyanNeon
                   allDone -> StatusComplete
                   completedTasks > 0 || partialTasks > 0 -> StatusPartial
@@ -155,9 +167,13 @@ fun CollapsibleTimeBlockCard(
 
           Text(
             text = block.label,
-            color = if (isCurrentBlock) CyanNeon else TextPrimary,
+            color = when {
+              isFutureBlock -> TextMuted
+              isCurrentBlock -> CyanNeon
+              else -> TextPrimary
+            },
             fontSize = 14.sp,
-            fontWeight = FontWeight.Bold,
+            fontWeight = if (isCurrentBlock) FontWeight.Bold else FontWeight.SemiBold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
           )
@@ -165,56 +181,85 @@ fun CollapsibleTimeBlockCard(
 
         Spacer(modifier = Modifier.width(8.dp))
 
-        // Right: Task Count Badge & Animated Chevron (▼ / ▲)
-        Row(
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-          // Progress / Count Pill
+        if (isFutureBlock) {
+          // Locked Pill for future time table
           Box(
             modifier = Modifier
               .clip(RoundedCornerShape(8.dp))
-              .background(
-                when {
-                  allDone -> StatusComplete.copy(alpha = 0.15f)
-                  isCurrentBlock -> CyanNeon.copy(alpha = 0.15f)
-                  else -> DarkSurfaceElevated
-                }
-              )
-              .border(
-                1.dp,
-                when {
-                  allDone -> StatusComplete.copy(alpha = 0.4f)
-                  isCurrentBlock -> CyanNeon.copy(alpha = 0.4f)
-                  else -> DarkSurfaceBorder
-                },
-                RoundedCornerShape(8.dp)
-              )
-              .padding(horizontal = 8.dp, vertical = 3.dp)
+              .background(DarkSurfaceElevated.copy(alpha = 0.8f))
+              .border(1.dp, DarkSurfaceBorder.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+              .padding(horizontal = 8.dp, vertical = 4.dp)
           ) {
-            Text(
-              text = if (allDone) "$completedTasks/$totalTasks पूर्ण ✓" else "$completedTasks/$totalTasks",
-              color = if (allDone) StatusComplete else if (isCurrentBlock) CyanNeon else TextSecondary,
-              fontSize = 11.sp,
-              fontWeight = FontWeight.Bold
+            Row(
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+              Icon(
+                imageVector = Icons.Default.Lock,
+                contentDescription = "Locked",
+                tint = TextMuted,
+                modifier = Modifier.size(11.dp)
+              )
+              Text(
+                text = "समय आने पर खुलेगा",
+                color = TextMuted,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold
+              )
+            }
+          }
+        } else {
+          // Right: Task Count Badge & Animated Chevron (▼ / ▲)
+          Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+          ) {
+            // Progress / Count Pill
+            Box(
+              modifier = Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .background(
+                  when {
+                    allDone -> StatusComplete.copy(alpha = 0.15f)
+                    isCurrentBlock -> CyanNeon.copy(alpha = 0.15f)
+                    else -> DarkSurfaceElevated
+                  }
+                )
+                .border(
+                  1.dp,
+                  when {
+                    allDone -> StatusComplete.copy(alpha = 0.4f)
+                    isCurrentBlock -> CyanNeon.copy(alpha = 0.4f)
+                    else -> DarkSurfaceBorder
+                  },
+                  RoundedCornerShape(8.dp)
+                )
+                .padding(horizontal = 8.dp, vertical = 3.dp)
+            ) {
+              Text(
+                text = if (allDone) "$completedTasks/$totalTasks पूर्ण ✓" else "$completedTasks/$totalTasks",
+                color = if (allDone) StatusComplete else if (isCurrentBlock) CyanNeon else TextSecondary,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold
+              )
+            }
+
+            // Expand / Collapse Chevron Icon
+            Icon(
+              imageVector = Icons.Default.KeyboardArrowDown,
+              contentDescription = if (isExpanded) "Collapse" else "Expand",
+              tint = if (isExpanded) CyanNeon else TextMuted,
+              modifier = Modifier
+                .size(20.dp)
+                .rotate(arrowRotation)
             )
           }
-
-          // Expand / Collapse Chevron Icon
-          Icon(
-            imageVector = Icons.Default.KeyboardArrowDown,
-            contentDescription = if (isExpanded) "Collapse" else "Expand",
-            tint = if (isExpanded) CyanNeon else TextMuted,
-            modifier = Modifier
-              .size(20.dp)
-              .rotate(arrowRotation)
-          )
         }
       }
 
       // 2. Expanded Content: List of Small Tasks + Add Small Task Button
       AnimatedVisibility(
-        visible = isExpanded,
+        visible = isExpanded && !isFutureBlock,
         enter = expandVertically(animationSpec = tween(220)) + fadeIn(),
         exit = shrinkVertically(animationSpec = tween(180)) + fadeOut()
       ) {
@@ -244,6 +289,7 @@ fun CollapsibleTimeBlockCard(
                 SmallTaskRow(
                   task = task,
                   isCurrent = isCurrentTask,
+                  isFuture = isFutureBlock,
                   onStatusChange = { newStatus -> onStatusChange(task, newStatus) },
                   onEdit = { onEditTask(task) },
                   onDelete = { onDeleteTask(task) }
@@ -295,6 +341,7 @@ fun CollapsibleTimeBlockCard(
 fun SmallTaskRow(
   task: DayTaskEntity,
   isCurrent: Boolean,
+  isFuture: Boolean = false,
   onStatusChange: (TaskStatus) -> Unit,
   onEdit: () -> Unit,
   onDelete: () -> Unit,
@@ -308,6 +355,7 @@ fun SmallTaskRow(
 
   val animatedBg by animateColorAsState(
     targetValue = when {
+      isFuture -> DarkSurface.copy(alpha = 0.35f)
       isCurrent -> DarkSurfaceElevated.copy(alpha = 0.95f)
       isComplete -> DarkSurface.copy(alpha = 0.6f)
       else -> DarkSurface.copy(alpha = 0.45f)
@@ -322,7 +370,7 @@ fun SmallTaskRow(
       .background(animatedBg)
       .border(
         1.dp,
-        if (isCurrent) CyanNeon.copy(alpha = 0.4f) else DarkSurfaceBorder.copy(alpha = 0.6f),
+        if (isCurrent) CyanNeon.copy(alpha = 0.4f) else DarkSurfaceBorder.copy(alpha = if (isFuture) 0.3f else 0.6f),
         RoundedCornerShape(10.dp)
       )
       .padding(horizontal = 8.dp, vertical = 6.dp),
@@ -334,19 +382,20 @@ fun SmallTaskRow(
       verticalAlignment = Alignment.CenterVertically,
       modifier = Modifier
         .weight(1f)
-        .clickable {
+        .clickable(enabled = !isFuture) {
           // Fast toggle: Missed -> Complete -> Missed
           val nextStatus = if (isComplete) TaskStatus.MISSED else TaskStatus.COMPLETE
           onStatusChange(nextStatus)
         }
     ) {
-      // Checkbox Box (Tap cycles Complete / Pending, Long tap / pill opens other statuses)
+      // Checkbox Box
       Box(
         modifier = Modifier
           .size(24.dp)
           .clip(RoundedCornerShape(6.dp))
           .background(
             when {
+              isFuture -> DarkSurfaceElevated.copy(alpha = 0.6f)
               isComplete -> StatusComplete
               isPartial -> StatusPartial
               isMissed -> StatusMissed
@@ -356,6 +405,7 @@ fun SmallTaskRow(
           .border(
             1.dp,
             when {
+              isFuture -> DarkSurfaceBorder.copy(alpha = 0.5f)
               isComplete -> StatusComplete
               isPartial -> StatusPartial
               isMissed -> StatusMissed
@@ -365,30 +415,39 @@ fun SmallTaskRow(
           ),
         contentAlignment = Alignment.Center
       ) {
-        when {
-          isComplete -> {
-            Icon(
-              imageVector = Icons.Default.Check,
-              contentDescription = "Complete",
-              tint = Color(0xFF003314),
-              modifier = Modifier.size(16.dp)
-            )
-          }
-          isPartial -> {
-            Icon(
-              imageVector = Icons.Default.Remove,
-              contentDescription = "Partial",
-              tint = Color(0xFF332000),
-              modifier = Modifier.size(16.dp)
-            )
-          }
-          isMissed -> {
-            Icon(
-              imageVector = Icons.Default.Close,
-              contentDescription = "Missed",
-              tint = Color.White,
-              modifier = Modifier.size(14.dp)
-            )
+        if (isFuture) {
+          Icon(
+            imageVector = Icons.Default.Lock,
+            contentDescription = "Task Locked",
+            tint = TextMuted.copy(alpha = 0.6f),
+            modifier = Modifier.size(12.dp)
+          )
+        } else {
+          when {
+            isComplete -> {
+              Icon(
+                imageVector = Icons.Default.Check,
+                contentDescription = "Complete",
+                tint = Color(0xFF003314),
+                modifier = Modifier.size(16.dp)
+              )
+            }
+            isPartial -> {
+              Icon(
+                imageVector = Icons.Default.Remove,
+                contentDescription = "Partial",
+                tint = Color(0xFF332000),
+                modifier = Modifier.size(16.dp)
+              )
+            }
+            isMissed -> {
+              Icon(
+                imageVector = Icons.Default.Close,
+                contentDescription = "Missed",
+                tint = Color.White,
+                modifier = Modifier.size(14.dp)
+              )
+            }
           }
         }
       }
@@ -400,7 +459,12 @@ fun SmallTaskRow(
         Row(verticalAlignment = Alignment.CenterVertically) {
           Text(
             text = task.name,
-            color = if (isComplete) TextMuted else if (isCurrent) CyanNeon else TextPrimary,
+            color = when {
+              isFuture -> TextMuted
+              isComplete -> TextMuted
+              isCurrent -> CyanNeon
+              else -> TextPrimary
+            },
             fontSize = 13.sp,
             fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium,
             textDecoration = if (isComplete) TextDecoration.LineThrough else null,
@@ -416,7 +480,7 @@ fun SmallTaskRow(
           // Short Hindi Time
           Text(
             text = TimeUtils.minutesToShortHindiTime(task.timeMinutes),
-            color = TextSecondary,
+            color = if (isFuture) TextMuted.copy(alpha = 0.6f) else TextSecondary,
             fontSize = 10.sp
           )
 
@@ -447,89 +511,106 @@ fun SmallTaskRow(
     Spacer(modifier = Modifier.width(6.dp))
 
     // Right: Status Switcher & Edit / Delete
-    Row(
-      verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(2.dp)
-    ) {
-      // Fast 3-State Picker Button (Complete ✓ / Partial ½ / Missed ✗)
-      Box {
-        Box(
-          modifier = Modifier
-            .clip(RoundedCornerShape(6.dp))
-            .background(DarkSurfaceElevated)
-            .border(1.dp, DarkSurfaceBorder, RoundedCornerShape(6.dp))
-            .clickable { showStatusMenu = true }
-            .padding(horizontal = 6.dp, vertical = 3.dp)
+    if (isFuture) {
+      Box(
+        modifier = Modifier
+          .clip(RoundedCornerShape(6.dp))
+          .background(DarkSurfaceElevated.copy(alpha = 0.6f))
+          .border(1.dp, DarkSurfaceBorder.copy(alpha = 0.4f), RoundedCornerShape(6.dp))
+          .padding(horizontal = 6.dp, vertical = 3.dp)
+      ) {
+        Text(
+          text = "🔒 Locked",
+          color = TextMuted,
+          fontSize = 10.sp,
+          fontWeight = FontWeight.Bold
+        )
+      }
+    } else {
+      Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(2.dp)
+      ) {
+        // Fast 3-State Picker Button (Complete ✓ / Partial ½ / Missed ✗)
+        Box {
+          Box(
+            modifier = Modifier
+              .clip(RoundedCornerShape(6.dp))
+              .background(DarkSurfaceElevated)
+              .border(1.dp, DarkSurfaceBorder, RoundedCornerShape(6.dp))
+              .clickable { showStatusMenu = true }
+              .padding(horizontal = 6.dp, vertical = 3.dp)
+          ) {
+            Text(
+              text = when (task.status) {
+                TaskStatus.COMPLETE -> "✓ पूर्ण"
+                TaskStatus.PARTIAL -> "½ आधा"
+                TaskStatus.MISSED -> "✗ छूटा"
+              },
+              color = when (task.status) {
+                TaskStatus.COMPLETE -> StatusComplete
+                TaskStatus.PARTIAL -> StatusPartial
+                TaskStatus.MISSED -> StatusMissed
+              },
+              fontSize = 10.sp,
+              fontWeight = FontWeight.Bold
+            )
+          }
+
+          DropdownMenu(
+            expanded = showStatusMenu,
+            onDismissRequest = { showStatusMenu = false },
+            modifier = Modifier.background(DarkSurfaceElevated)
+          ) {
+            DropdownMenuItem(
+              text = { Text("✓ Complete (पूर्ण)", color = StatusComplete, fontSize = 12.sp, fontWeight = FontWeight.Bold) },
+              onClick = {
+                onStatusChange(TaskStatus.COMPLETE)
+                showStatusMenu = false
+              }
+            )
+            DropdownMenuItem(
+              text = { Text("½ Partial (आधा)", color = StatusPartial, fontSize = 12.sp, fontWeight = FontWeight.Bold) },
+              onClick = {
+                onStatusChange(TaskStatus.PARTIAL)
+                showStatusMenu = false
+              }
+            )
+            DropdownMenuItem(
+              text = { Text("✗ Missed (छूट गया)", color = StatusMissed, fontSize = 12.sp, fontWeight = FontWeight.Bold) },
+              onClick = {
+                onStatusChange(TaskStatus.MISSED)
+                showStatusMenu = false
+              }
+            )
+          }
+        }
+
+        // Edit Button
+        IconButton(
+          onClick = onEdit,
+          modifier = Modifier.size(26.dp)
         ) {
-          Text(
-            text = when (task.status) {
-              TaskStatus.COMPLETE -> "✓ पूर्ण"
-              TaskStatus.PARTIAL -> "½ आधा"
-              TaskStatus.MISSED -> "✗ छूटा"
-            },
-            color = when (task.status) {
-              TaskStatus.COMPLETE -> StatusComplete
-              TaskStatus.PARTIAL -> StatusPartial
-              TaskStatus.MISSED -> StatusMissed
-            },
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Bold
+          Icon(
+            imageVector = Icons.Default.Edit,
+            contentDescription = "Edit Task",
+            tint = TextSecondary,
+            modifier = Modifier.size(13.dp)
           )
         }
 
-        DropdownMenu(
-          expanded = showStatusMenu,
-          onDismissRequest = { showStatusMenu = false },
-          modifier = Modifier.background(DarkSurfaceElevated)
+        // Delete Button
+        IconButton(
+          onClick = onDelete,
+          modifier = Modifier.size(26.dp)
         ) {
-          DropdownMenuItem(
-            text = { Text("✓ Complete (पूर्ण)", color = StatusComplete, fontSize = 12.sp, fontWeight = FontWeight.Bold) },
-            onClick = {
-              onStatusChange(TaskStatus.COMPLETE)
-              showStatusMenu = false
-            }
-          )
-          DropdownMenuItem(
-            text = { Text("½ Partial (आधा)", color = StatusPartial, fontSize = 12.sp, fontWeight = FontWeight.Bold) },
-            onClick = {
-              onStatusChange(TaskStatus.PARTIAL)
-              showStatusMenu = false
-            }
-          )
-          DropdownMenuItem(
-            text = { Text("✗ Missed (छूट गया)", color = StatusMissed, fontSize = 12.sp, fontWeight = FontWeight.Bold) },
-            onClick = {
-              onStatusChange(TaskStatus.MISSED)
-              showStatusMenu = false
-            }
+          Icon(
+            imageVector = Icons.Default.DeleteOutline,
+            contentDescription = "Delete Task",
+            tint = StatusMissed.copy(alpha = 0.8f),
+            modifier = Modifier.size(13.dp)
           )
         }
-      }
-
-      // Edit Button
-      IconButton(
-        onClick = onEdit,
-        modifier = Modifier.size(26.dp)
-      ) {
-        Icon(
-          imageVector = Icons.Default.Edit,
-          contentDescription = "Edit Task",
-          tint = TextSecondary,
-          modifier = Modifier.size(13.dp)
-        )
-      }
-
-      // Delete Button
-      IconButton(
-        onClick = onDelete,
-        modifier = Modifier.size(26.dp)
-      ) {
-        Icon(
-          imageVector = Icons.Default.DeleteOutline,
-          contentDescription = "Delete Task",
-          tint = StatusMissed.copy(alpha = 0.8f),
-          modifier = Modifier.size(13.dp)
-        )
       }
     }
   }

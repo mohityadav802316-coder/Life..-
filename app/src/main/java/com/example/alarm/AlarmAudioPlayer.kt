@@ -24,6 +24,29 @@ object AlarmAudioPlayer {
 
   fun isPlaying(): Boolean = isPlayingState
 
+  /**
+   * Verifies if an audio file or URI can be parsed and prepared by the device media codec.
+   * Returns failure if corrupted, missing, or unsupported codec.
+   */
+  fun testPlayback(context: Context, uriString: String): Result<Unit> {
+    return try {
+      val testPlayer = MediaPlayer()
+      val customFile = File(uriString)
+      if (customFile.exists()) {
+        testPlayer.setDataSource(customFile.absolutePath)
+      } else {
+        val uri = Uri.parse(uriString)
+        testPlayer.setDataSource(context.applicationContext, uri)
+      }
+      testPlayer.prepare()
+      testPlayer.release()
+      Result.success(Unit)
+    } catch (e: Exception) {
+      Log.e("AlarmAudioPlayer", "Codec validation failed for $uriString", e)
+      Result.failure(e)
+    }
+  }
+
   fun startWithSavedSettings(context: Context) {
     CoroutineScope(Dispatchers.IO).launch {
       try {
@@ -53,70 +76,96 @@ object AlarmAudioPlayer {
     stop()
     isPlayingState = true
 
-    // 2. Configure and start audio player
+    // 2. Configure and start audio player with resilient multi-stage fallback
     try {
-      val player = MediaPlayer()
-      var dataSourceSet = false
+      var startedSuccessfully = false
+      val clampedVol = volume.coerceIn(0.05f, 1.0f)
+      val audioAttrs = AudioAttributes.Builder()
+        .setUsage(AudioAttributes.USAGE_ALARM)
+        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+        .build()
 
-      // Try custom sound first if selected
+      // Stage 1: Try custom sound if specified
       if (soundType.equals("CUSTOM", ignoreCase = true) && !customUriString.isNullOrBlank()) {
+        var customPlayer: MediaPlayer? = null
         try {
+          customPlayer = MediaPlayer()
           val customFile = File(customUriString)
           if (customFile.exists()) {
-            player.setDataSource(customFile.absolutePath)
-            dataSourceSet = true
+            customPlayer.setDataSource(customFile.absolutePath)
           } else {
             val uri = Uri.parse(customUriString)
-            player.setDataSource(context.applicationContext, uri)
-            dataSourceSet = true
+            customPlayer.setDataSource(context.applicationContext, uri)
           }
+          customPlayer.setAudioAttributes(audioAttrs)
+          customPlayer.setVolume(clampedVol, clampedVol)
+          customPlayer.isLooping = true
+          customPlayer.prepare()
+          customPlayer.start()
+          mediaPlayer = customPlayer
+          startedSuccessfully = true
         } catch (e: Exception) {
-          Log.w("AlarmAudioPlayer", "Could not load custom sound ($customUriString), falling back to high-tone default", e)
-          player.reset()
-          dataSourceSet = false
+          Log.w("AlarmAudioPlayer", "Custom sound prepare/playback failed ($customUriString). Falling back to built-in high tone.", e)
+          try {
+            customPlayer?.release()
+          } catch (_: Exception) {}
+          mediaPlayer = null
+          startedSuccessfully = false
         }
       }
 
-      // Built-in High-Tone Sharp Alarm Sound
-      if (!dataSourceSet) {
+      // Stage 2: Built-in High-Tone Sharp Alarm Sound
+      if (!startedSuccessfully) {
+        var rawPlayer: MediaPlayer? = null
         try {
+          rawPlayer = MediaPlayer()
           val afd = context.resources.openRawResourceFd(R.raw.high_tone_alarm)
           if (afd != null) {
-            player.setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
+            rawPlayer.setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
             afd.close()
-            dataSourceSet = true
+            rawPlayer.setAudioAttributes(audioAttrs)
+            rawPlayer.setVolume(clampedVol, clampedVol)
+            rawPlayer.isLooping = true
+            rawPlayer.prepare()
+            rawPlayer.start()
+            mediaPlayer = rawPlayer
+            startedSuccessfully = true
           }
         } catch (e: Exception) {
-          Log.w("AlarmAudioPlayer", "Failed loading high_tone_alarm raw resource, falling back to system ringtone", e)
-          player.reset()
-          dataSourceSet = false
+          Log.w("AlarmAudioPlayer", "Failed playing high_tone_alarm raw resource, falling back to system ringtone", e)
+          try {
+            rawPlayer?.release()
+          } catch (_: Exception) {}
+          mediaPlayer = null
+          startedSuccessfully = false
         }
       }
 
-      // System fallback if both custom and raw failed
-      if (!dataSourceSet) {
-        val alertUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-          ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-          ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
-        if (alertUri != null) {
-          player.setDataSource(context.applicationContext, alertUri)
-          dataSourceSet = true
+      // Stage 3: System fallback ringtone / alarm
+      if (!startedSuccessfully) {
+        var sysPlayer: MediaPlayer? = null
+        try {
+          sysPlayer = MediaPlayer()
+          val alertUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+            ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+            ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+          if (alertUri != null) {
+            sysPlayer.setDataSource(context.applicationContext, alertUri)
+            sysPlayer.setAudioAttributes(audioAttrs)
+            sysPlayer.setVolume(clampedVol, clampedVol)
+            sysPlayer.isLooping = true
+            sysPlayer.prepare()
+            sysPlayer.start()
+            mediaPlayer = sysPlayer
+            startedSuccessfully = true
+          }
+        } catch (e: Exception) {
+          Log.e("AlarmAudioPlayer", "Fatal fallback error playing system alert tone", e)
+          try {
+            sysPlayer?.release()
+          } catch (_: Exception) {}
+          mediaPlayer = null
         }
-      }
-
-      if (dataSourceSet) {
-        player.setAudioAttributes(
-          AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_ALARM)
-            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-            .build()
-        )
-        val clampedVol = volume.coerceIn(0.05f, 1.0f)
-        player.setVolume(clampedVol, clampedVol)
-        player.isLooping = true
-        player.prepare()
-        player.start()
-        mediaPlayer = player
       }
     } catch (e: Exception) {
       Log.e("AlarmAudioPlayer", "Error initializing alarm audio player", e)

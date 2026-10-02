@@ -71,7 +71,9 @@ fun SummaryHeaderCard(
   onPrevDay: () -> Unit,
   onNextDay: () -> Unit,
   onJumpToday: () -> Unit,
-  modifier: Modifier = Modifier
+  modifier: Modifier = Modifier,
+  currentTimeStr: String? = null,
+  streakInfo: com.example.data.model.StreakInfo? = null
 ) {
   val animatedProgress by animateFloatAsState(
     targetValue = (summary.completionPercentage / 100f).coerceIn(0f, 1f),
@@ -134,7 +136,7 @@ fun SummaryHeaderCard(
           )
           Spacer(modifier = Modifier.width(6.dp))
           Text(
-            text = "$greeting • TRACKER ACTIVE",
+            text = if (isToday && !currentTimeStr.isNullOrBlank()) "$greeting • $currentTimeStr" else "$greeting • TRACKER ACTIVE",
             color = CyanNeon,
             fontSize = 11.sp,
             fontWeight = FontWeight.Bold,
@@ -193,19 +195,26 @@ fun SummaryHeaderCard(
             }
           }
 
+          val canGoNext = !isToday && selectedDate < TimeUtils.getTodayDateString()
+
           IconButton(
             onClick = onNextDay,
+            enabled = canGoNext,
             modifier = Modifier
               .size(34.dp)
               .clip(CircleShape)
-              .background(DarkSurface)
-              .border(1.dp, DarkSurfaceBorder, CircleShape)
+              .background(if (canGoNext) DarkSurface else DarkSurface.copy(alpha = 0.35f))
+              .border(
+                1.dp,
+                if (canGoNext) DarkSurfaceBorder else DarkSurfaceBorder.copy(alpha = 0.25f),
+                CircleShape
+              )
               .testTag("next_day_button")
           ) {
             Icon(
               imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-              contentDescription = "Next Day",
-              tint = TextSecondary,
+              contentDescription = if (canGoNext) "Next Day" else "Next Day (Locked)",
+              tint = if (canGoNext) TextSecondary else TextMuted.copy(alpha = 0.3f),
               modifier = Modifier.size(16.dp)
             )
           }
@@ -257,6 +266,64 @@ fun SummaryHeaderCard(
                   )
               )
             }
+          }
+        }
+      }
+
+      // Feature 1: Streak Badge
+      if (streakInfo != null) {
+        Spacer(modifier = Modifier.height(10.dp))
+        Row(
+          modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(DarkSurfaceElevated.copy(alpha = 0.8f))
+            .border(
+              1.dp,
+              Brush.horizontalGradient(
+                listOf(
+                  Color(0xFFFF9800).copy(alpha = 0.5f),
+                  VioletNeon.copy(alpha = 0.35f),
+                  CyanNeon.copy(alpha = 0.25f)
+                )
+              ),
+              RoundedCornerShape(12.dp)
+            )
+            .padding(horizontal = 12.dp, vertical = 7.dp),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(text = "🔥", fontSize = 14.sp)
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+              text = "${streakInfo.currentStreak} Day Streak",
+              color = Color(0xFFFFB74D),
+              fontSize = 12.sp,
+              fontWeight = FontWeight.Black
+            )
+            Text(
+              text = " • Best: ${streakInfo.longestStreak}d",
+              color = TextSecondary,
+              fontSize = 11.sp
+            )
+          }
+
+          Box(
+            modifier = Modifier
+              .clip(RoundedCornerShape(6.dp))
+              .background(
+                if (streakInfo.isMaintainedToday) Color(0xFF4CAF50).copy(alpha = 0.2f)
+                else DarkSurface
+              )
+              .padding(horizontal = 8.dp, vertical = 3.dp)
+          ) {
+            Text(
+              text = streakInfo.todayStatus,
+              color = if (streakInfo.isMaintainedToday) Color(0xFF81C784) else TextSecondary,
+              fontSize = 10.sp,
+              fontWeight = FontWeight.Bold
+            )
           }
         }
       }

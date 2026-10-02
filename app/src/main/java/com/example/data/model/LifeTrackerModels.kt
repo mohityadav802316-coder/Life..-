@@ -1,6 +1,7 @@
 package com.example.data.model
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 import androidx.room.TypeConverter
 
@@ -29,7 +30,42 @@ enum class ReflectionCategory(val label: String, val iconPrefix: String) {
   }
 }
 
-@Entity(tableName = "day_tasks")
+enum class TaskPriority(val code: String, val label: String, val badge: String) {
+  NORMAL("NORMAL", "Normal", ""),
+  IMPORTANT("IMPORTANT", "Important", "⭐"),
+  HIGH("HIGH", "High Priority", "⚡");
+
+  companion object {
+    fun fromString(value: String): TaskPriority =
+      entries.firstOrNull { it.name.equals(value, ignoreCase = true) || it.code.equals(value, ignoreCase = true) } ?: NORMAL
+  }
+}
+
+enum class DailyMood(val code: String, val emoji: String, val label: String) {
+  GREAT("GREAT", "😊", "Great"),
+  GOOD("GOOD", "🙂", "Good"),
+  NORMAL("NORMAL", "😐", "Normal"),
+  LOW("LOW", "😕", "Low"),
+  BAD("BAD", "😞", "Bad");
+
+  companion object {
+    fun fromCode(code: String): DailyMood =
+      entries.firstOrNull { it.code.equals(code, ignoreCase = true) } ?: NORMAL
+  }
+}
+
+@Entity(tableName = "daily_notes")
+data class DailyNoteEntity(
+  @PrimaryKey val date: String, // YYYY-MM-DD
+  val note: String = "",
+  val mood: String = "NORMAL", // "GREAT", "GOOD", "NORMAL", "LOW", "BAD"
+  val updatedAt: Long = System.currentTimeMillis()
+)
+
+@Entity(
+  tableName = "day_tasks",
+  indices = [Index(value = ["date"]), Index(value = ["templateId"])]
+)
 data class DayTaskEntity(
   @PrimaryKey(autoGenerate = true) val id: Long = 0,
   val date: String, // YYYY-MM-DD
@@ -40,7 +76,8 @@ data class DayTaskEntity(
   val status: TaskStatus = TaskStatus.MISSED,
   val notes: String = "",
   val isExtra: Boolean = false, // True for Today Extra Tasks
-  val orderIndex: Int = 0
+  val orderIndex: Int = 0,
+  val priority: String = "NORMAL" // "NORMAL", "IMPORTANT", "HIGH"
 )
 
 @Entity(tableName = "routine_templates")
@@ -52,10 +89,14 @@ data class RoutineTemplateEntity(
   val notes: String = "",
   val orderIndex: Int = 0,
   val daysMask: Int = 127, // Bitmask for 7 days (1..7 all active = 127)
-  val isActive: Boolean = true
+  val isActive: Boolean = true,
+  val priority: String = "NORMAL" // "NORMAL", "IMPORTANT", "HIGH"
 )
 
-@Entity(tableName = "reflections")
+@Entity(
+  tableName = "reflections",
+  indices = [Index(value = ["date"])]
+)
 data class ReflectionEntity(
   @PrimaryKey(autoGenerate = true) val id: Long = 0,
   val title: String,
@@ -91,8 +132,54 @@ data class UserSettingsEntity(
   val alarmVolume: Float = 1.0f,
   val isVibrationEnabled: Boolean = true,
   val alarmRepeatMode: String = "DAILY", // "DAILY", "WEEKDAYS", "CUSTOM"
-  val alarmCustomDaysMask: Int = 127
-)
+  val alarmCustomDaysMask: Int = 127,
+  val isHapticFeedbackEnabled: Boolean = true,
+  val smartReminderMinutes: Int = 0, // 0 = Off, 5, 10, 15, 30 mins before
+  val userName: String = "मोहित", // User name for personalized meditation ending and greetings
+  val meditationChimeEnabled: Boolean = true,
+  val meditationVoiceLanguage: String = "HI", // "HI" for Hindi, "EN" for English
+  val enableQuickAdd: Boolean = true,
+  val enableMorningBrief: Boolean = true,
+  val enableLifeTimeline: Boolean = true,
+  val enablePersonalInsights: Boolean = true,
+  val enableRecoveryMode: Boolean = true,
+  val dailyEnergyMode: String = "NORMAL",
+  val dailyEnergyModeDate: String = "",
+  val dailyChallengeEnabled: Boolean = true,
+  val musicAutoRoutineEnabled: Boolean = true,
+  val shortDailyLimit: Int = 20,
+  val shortWarning50Enabled: Boolean = true,
+  val shortWarning80Enabled: Boolean = true,
+  val shortWarning100Enabled: Boolean = true,
+  val shortFocusLockIntegration: Boolean = true,
+  val shortTrackingEnabled: Boolean = true,
+  val dashboardPreset: String = "CUSTOM",
+  val dashboardSectionsOrder: String = "NEXT_ACTIVITY,PRIORITY_TASK,TODAYS_ROUTINE,DAILY_PROGRESS,STREAK,ENERGY_MODE,SHORT_CONTENT_TRACKER,MEDITATION,MUSIC,DAILY_CHALLENGE,NEXT_ALARM,RECOVERY_DAY,WEEKLY_SUMMARY",
+  val dashboardDisabledSections: String = "",
+  val isFocusModeActive: Boolean = false,
+  val isFocusScheduleEnabled: Boolean = false,
+  val focusStartTimeMinutes: Int = 1260, // 9:00 PM (21 * 60)
+  val focusEndTimeMinutes: Int = 360,    // 6:00 AM (6 * 60)
+  val focusSessionEndTimestamp: Long = 0L,
+  // System-Wide OLED Black Screen Mode
+  val isBlackScreenEnabled: Boolean = false,
+  val isBlackScreenOverlayActive: Boolean = false,
+  val isFloatingDotEnabled: Boolean = true,
+  val blackScreenDotX: Int = 80,
+  val blackScreenDotY: Int = 260,
+  val blackScreenDotSize: Int = 36,
+  val blackScreenDotOpacity: Float = 0.45f,
+  val blackScreenActivationMethod: String = "DOUBLE_TAP",
+  val blackScreenExitGesture: String = "THREE_FINGER_TAP",
+  val blackScreenGestureSensitivity: Float = 1.0f,
+  val blackScreenShowClock: Boolean = true,
+  val blackScreenClockFormat24: Boolean = false,
+  val blackScreenRestoreAfterUnlock: Boolean = true,
+  val blackScreenRestoreAfterReboot: Boolean = true
+) {
+  val dashboardOrder: String get() = dashboardSectionsOrder
+  val dashboardDisabled: String get() = dashboardDisabledSections
+}
 
 @Entity(tableName = "daily_snapshots")
 data class DailySnapshotEntity(
@@ -107,6 +194,29 @@ data class DailySnapshotEntity(
   val lastUpdated: Long = System.currentTimeMillis()
 )
 
+data class OverallStats(
+  val totalDays: Int = 0,
+  val totalTasks: Int = 0,
+  val completedTasks: Int = 0,
+  val partialTasks: Int = 0,
+  val missedTasks: Int = 0,
+  val totalScore: Float = 0f,
+  val averagePercentage: Float = 0f
+)
+
+data class CycleDayAverage(
+  val dayOfCycle: Int,
+  val dayCount: Int,
+  val avgPercentage: Float
+)
+
+data class CategoryAggregate(
+  val category: String,
+  val totalCount: Int,
+  val completedCount: Int,
+  val partialCount: Int
+)
+
 data class DaySummary(
   val date: String,
   val dayOfCycle: Int,
@@ -117,6 +227,17 @@ data class DaySummary(
   val totalScore: Float,
   val completionPercentage: Int
 )
+
+data class StreakInfo(
+  val currentStreak: Int = 0,
+  val longestStreak: Int = 0,
+  val todayStatus: String = "Pending", // "Maintained 🔥", "In Progress ⏳", "Pending ⚠️", "Broken"
+  val isMaintainedToday: Boolean = false,
+  val activeDaysCount: Int = 0
+) {
+  val bestStreak: Int get() = longestStreak
+  val consistencyScore: Float get() = if (longestStreak > 0) ((currentStreak.toFloat() / longestStreak.toFloat()) * 100f).coerceIn(0f, 100f) else 100f
+}
 
 class LifeTrackerConverters {
   @TypeConverter

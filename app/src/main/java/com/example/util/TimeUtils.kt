@@ -31,6 +31,9 @@ object TimeUtils {
     return String.format(Locale.US, "%d:%02d %s", hour12, minute, if (isPm) "PM" else "AM")
   }
 
+  /** Alias for minutesTo12Hour ensuring 12-hour format */
+  fun formatTime12Hour(totalMinutes: Int): String = minutesTo12Hour(totalMinutes)
+
   /**
    * Returns natural Hindi time period label and appropriate contextual emoji:
    * 🌅 सुबह (4:00 AM - 6:59 AM)
@@ -129,6 +132,8 @@ object TimeUtils {
     return isoDateFormat.format(Date())
   }
 
+  fun getTodayIsoDate(): String = getTodayDateString()
+
   fun formatDateDisplay(dateStr: String): String {
     return try {
       val date = isoDateFormat.parse(dateStr) ?: return dateStr
@@ -216,6 +221,26 @@ object TimeUtils {
     return String.format(Locale.US, "%02d:%02d", h, m)
   }
 
+  fun getCurrentMinutes(): Int {
+    val cal = Calendar.getInstance()
+    return cal.get(Calendar.HOUR_OF_DAY) * 60 + cal.get(Calendar.MINUTE)
+  }
+
+  fun getCurrentMinutesFromMidnight(): Int = getCurrentMinutes()
+
+  fun getNowTimeShort(): String {
+    val sdf = SimpleDateFormat("h:mm a", Locale.US)
+    return sdf.format(Date())
+  }
+
+  fun isFutureDate(dateStr: String, todayStr: String = getTodayDateString()): Boolean {
+    return dateStr > todayStr
+  }
+
+  fun isFutureTime(timeMinutes: Int, currentMinutes: Int = getCurrentMinutes()): Boolean {
+    return timeMinutes > currentMinutes
+  }
+
   fun getCurrentIsoTimestamp(): String {
     val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
     return sdf.format(Date())
@@ -255,5 +280,11 @@ object TimeUtils {
     val dateDisplay = formatDateDisplay(dateStr)
     val timeHindi = timeStringToHindi(timeStr)
     return "$dateDisplay • $timeHindi"
+  }
+
+  fun formatSecondsToMmSs(totalSeconds: Int): String {
+    val mins = (totalSeconds / 60).coerceAtLeast(0)
+    val secs = (totalSeconds % 60).coerceAtLeast(0)
+    return String.format(Locale.US, "%02d:%02d", mins, secs)
   }
 }

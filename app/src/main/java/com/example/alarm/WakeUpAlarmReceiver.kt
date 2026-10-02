@@ -29,6 +29,12 @@ class WakeUpAlarmReceiver : BroadcastReceiver() {
       AlarmScheduler.ACTION_TRIGGER_ALARM -> {
         handleAlarmTrigger(context, intent)
       }
+      AlarmScheduler.ACTION_TIMETABLE_REMINDER -> {
+        handleTimetableReminder(context, intent)
+      }
+      AlarmScheduler.ACTION_SMART_PRE_REMINDER -> {
+        handleSmartPreReminder(context, intent)
+      }
       AlarmScheduler.ACTION_STOP_ALARM -> {
         AlarmAudioPlayer.stop()
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
@@ -45,10 +51,170 @@ class WakeUpAlarmReceiver : BroadcastReceiver() {
           AlarmScheduler.scheduleSnooze(context, snoozeMins)
         }
       }
-      Intent.ACTION_BOOT_COMPLETED -> {
+      Intent.ACTION_BOOT_COMPLETED,
+      Intent.ACTION_MY_PACKAGE_REPLACED -> {
         handleBootCompleted(context)
       }
+      com.example.focus.FocusModeManager.ACTION_FOCUS_MODE_ACTIVATE -> {
+        handleFocusModeActivate(context)
+      }
+      com.example.focus.FocusModeManager.ACTION_FOCUS_MODE_DEACTIVATE -> {
+        handleFocusModeDeactivate(context)
+      }
     }
+  }
+
+  private fun handleFocusModeActivate(context: Context) {
+    CoroutineScope(Dispatchers.IO).launch {
+      try {
+        val db = LifeTrackerDatabase.getDatabase(context)
+        val settings = db.userSettingsDao().getSettingsSync() ?: return@launch
+        com.example.focus.FocusModeManager.activateFocusSchedule(
+          context,
+          settings.focusStartTimeMinutes,
+          settings.focusEndTimeMinutes
+        )
+      } catch (e: Exception) {
+        Log.e("WakeUpAlarmReceiver", "Failed to activate focus mode", e)
+      }
+    }
+  }
+
+  private fun handleFocusModeDeactivate(context: Context) {
+    com.example.focus.FocusModeManager.deactivateFocusMode(context)
+  }
+
+  private fun handleTimetableReminder(context: Context, intent: Intent) {
+    AlarmScheduler.createNotificationChannels(context)
+
+    val templateId = intent.getLongExtra(AlarmScheduler.EXTRA_TEMPLATE_ID, 0L)
+    val name = intent.getStringExtra(AlarmScheduler.EXTRA_ACTIVITY_NAME) ?: "Daily Activity"
+    val timeMinutes = intent.getIntExtra(AlarmScheduler.EXTRA_TIME_MINUTES, 0)
+    val category = intent.getStringExtra(AlarmScheduler.EXTRA_CATEGORY) ?: "Routine"
+    val notes = intent.getStringExtra(AlarmScheduler.EXTRA_NOTES) ?: ""
+
+    val timeFormatted = TimeUtils.minutesTo12Hour(timeMinutes)
+    val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+
+    val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    } else {
+      PendingIntent.FLAG_UPDATE_CURRENT
+    }
+
+    val openAppIntent = Intent(context, com.example.MainActivity::class.java).apply {
+      this.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+    }
+    val contentPendingIntent = PendingIntent.getActivity(
+      context,
+      (AlarmScheduler.NOTIFICATION_ID_TIMETABLE_BASE + (templateId % 50000)).toInt(),
+      openAppIntent,
+      flags
+    )
+
+    val priority = intent.getStringExtra(AlarmScheduler.EXTRA_PRIORITY) ?: "NORMAL"
+    val priorityPrefix = when (priority.uppercase()) {
+      "HIGH" -> "⚡ "
+      "IMPORTANT" -> "⭐ "
+      else -> ""
+    }
+
+    val notificationTitle = "$priorityPrefix$name • $timeFormatted"
+    val notificationText = "$name — आपका निर्धारित समय हो गया है।"
+
+    val builder = NotificationCompat.Builder(context, AlarmScheduler.TIMETABLE_CHANNEL_ID)
+      .setSmallIcon(R.mipmap.ic_launcher)
+      .setContentTitle(notificationTitle)
+      .setContentText(notificationText)
+      .setPriority(NotificationCompat.PRIORITY_HIGH)
+      .setCategory(NotificationCompat.CATEGORY_REMINDER)
+      .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+      .setAutoCancel(true)
+      .setDefaults(NotificationCompat.DEFAULT_ALL)
+      .setContentIntent(contentPendingIntent)
+
+    if (notes.isNotBlank()) {
+      builder.setStyle(
+        NotificationCompat.BigTextStyle().bigText("$notificationText\n$notes")
+      )
+    }
+
+    val notificationId = (AlarmScheduler.NOTIFICATION_ID_TIMETABLE_BASE + (templateId % 50000)).toInt()
+    notificationManager.notify(notificationId, builder.build())
+    Log.d("WakeUpAlarmReceiver", "Dispatched timetable notification for $name at $timeFormatted")
+
+    // Daily recurring reschedule for next occurrence
+    if (templateId > 0L) {
+      CoroutineScope(Dispatchers.IO).launch {
+        try {
+          val db = LifeTrackerDatabase.getDatabase(context)
+          val settings = db.userSettingsDao().getSettingsSync()
+          val smartReminder = settings?.smartReminderMinutes ?: 0
+          val template = db.routineDao().getRoutineTemplateById(templateId)
+          if (template != null && template.isActive) {
+            AlarmScheduler.scheduleTimetableAlarm(context, template, smartReminder)
+          }
+        } catch (e: Exception) {
+          Log.e("WakeUpAlarmReceiver", "Failed to reschedule recurring timetable alarm", e)
+        }
+      }
+    }
+  }
+
+  /**
+   * Feature 2: Handles smart pre-reminder notification (e.g. 5, 10, 15, 30 mins before)
+   */
+  private fun handleSmartPreReminder(context: Context, intent: Intent) {
+    AlarmScheduler.createNotificationChannels(context)
+
+    val templateId = intent.getLongExtra(AlarmScheduler.EXTRA_TEMPLATE_ID, 0L)
+    val name = intent.getStringExtra(AlarmScheduler.EXTRA_ACTIVITY_NAME) ?: "Daily Activity"
+    val timeMinutes = intent.getIntExtra(AlarmScheduler.EXTRA_TIME_MINUTES, 0)
+    val preMinutes = intent.getIntExtra(AlarmScheduler.EXTRA_PRE_MINUTES, 10)
+    val priority = intent.getStringExtra(AlarmScheduler.EXTRA_PRIORITY) ?: "NORMAL"
+
+    val timeFormatted = TimeUtils.minutesTo12Hour(timeMinutes)
+    val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+
+    val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    } else {
+      PendingIntent.FLAG_UPDATE_CURRENT
+    }
+
+    val openAppIntent = Intent(context, com.example.MainActivity::class.java).apply {
+      this.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+    }
+    val contentPendingIntent = PendingIntent.getActivity(
+      context,
+      (AlarmScheduler.NOTIFICATION_ID_PRE_REMINDER_BASE + (templateId % 50000)).toInt(),
+      openAppIntent,
+      flags
+    )
+
+    val priorityPrefix = when (priority.uppercase()) {
+      "HIGH" -> "⚡ "
+      "IMPORTANT" -> "⭐ "
+      else -> "🔔 "
+    }
+
+    val notificationTitle = "$priorityPrefix$name in $preMinutes min • $timeFormatted"
+    val notificationText = "$name — आपका निर्धारित समय $preMinutes मिनट में होने वाला है ($timeFormatted)।"
+
+    val builder = NotificationCompat.Builder(context, AlarmScheduler.TIMETABLE_CHANNEL_ID)
+      .setSmallIcon(R.mipmap.ic_launcher)
+      .setContentTitle(notificationTitle)
+      .setContentText(notificationText)
+      .setPriority(NotificationCompat.PRIORITY_HIGH)
+      .setCategory(NotificationCompat.CATEGORY_REMINDER)
+      .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+      .setAutoCancel(true)
+      .setDefaults(NotificationCompat.DEFAULT_ALL)
+      .setContentIntent(contentPendingIntent)
+
+    val notificationId = (AlarmScheduler.NOTIFICATION_ID_PRE_REMINDER_BASE + (templateId % 50000)).toInt()
+    notificationManager.notify(notificationId, builder.build())
+    Log.d("WakeUpAlarmReceiver", "Dispatched smart pre-reminder notification for $name ($preMinutes min before)")
   }
 
   private fun handleAlarmTrigger(context: Context, intent: Intent) {
@@ -138,6 +304,7 @@ class WakeUpAlarmReceiver : BroadcastReceiver() {
   }
 
   private fun handleBootCompleted(context: Context) {
+    AlarmScheduler.createNotificationChannels(context)
     CoroutineScope(Dispatchers.IO).launch {
       try {
         val db = LifeTrackerDatabase.getDatabase(context)
@@ -151,8 +318,21 @@ class WakeUpAlarmReceiver : BroadcastReceiver() {
             settings.alarmCustomDaysMask
           )
         }
+        // Reschedule all active customized timetable alarms
+        val smartReminder = settings?.smartReminderMinutes ?: 0
+        val activeTemplates = db.routineDao().getActiveTemplatesSync()
+        for (template in activeTemplates) {
+          AlarmScheduler.scheduleTimetableAlarm(context, template, smartReminder)
+        }
+        Log.d("WakeUpAlarmReceiver", "Rescheduled ${activeTemplates.size} timetable alarms after device boot")
+
+        // Restore Focus Mode state & schedule
+        com.example.focus.FocusModeManager.onBootOrScheduleChange(context)
+
+        // Restore OLED Black Screen Mode & Floating Control if configured
+        com.example.blackscreen.BlackScreenManager.onBootCompleted(context)
       } catch (e: Exception) {
-        Log.e("WakeUpAlarmReceiver", "Failed to reschedule alarm after boot", e)
+        Log.e("WakeUpAlarmReceiver", "Failed to reschedule alarms after boot", e)
       }
     }
   }

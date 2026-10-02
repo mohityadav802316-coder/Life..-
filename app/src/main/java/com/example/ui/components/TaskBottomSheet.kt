@@ -66,7 +66,8 @@ fun TaskBottomSheet(
   isExtraTaskDefault: Boolean = false,
   initialTimeMinutesDefault: Int? = null,
   onDismiss: () -> Unit,
-  onSave: (id: Long, name: String, timeMinutes: Int, category: String, notes: String, isExtra: Boolean) -> Unit,
+  onSave: (id: Long, name: String, timeMinutes: Int, category: String, notes: String, isExtra: Boolean) -> Unit = { _, _, _, _, _, _ -> },
+  onSaveWithPriority: ((id: Long, name: String, timeMinutes: Int, category: String, notes: String, isExtra: Boolean, priority: String) -> Unit)? = null,
   onDelete: ((Long) -> Unit)? = null
 ) {
   val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -76,6 +77,7 @@ fun TaskBottomSheet(
   var category by remember { mutableStateOf(initialTask?.category ?: "Routine") }
   var notes by remember { mutableStateOf(initialTask?.notes ?: "") }
   var isExtra by remember { mutableStateOf(initialTask?.isExtra ?: isExtraTaskDefault) }
+  var priority by remember { mutableStateOf(initialTask?.priority ?: "NORMAL") }
   var showTimePicker by remember { mutableStateOf(false) }
 
   val defaultCategories = listOf("Morning", "Deep Work", "Fitness", "Health", "Learning", "Mindset", "Rest", "Routine")
@@ -273,6 +275,51 @@ fun TaskBottomSheet(
 
       Spacer(modifier = Modifier.height(16.dp))
 
+      // Priority Selection (Feature 6)
+      Text(
+        text = "Priority Level / प्राथमिकता",
+        color = TextSecondary,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.SemiBold
+      )
+      Spacer(modifier = Modifier.height(8.dp))
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+      ) {
+        listOf(
+          "NORMAL" to "Normal",
+          "IMPORTANT" to "⭐ Important",
+          "HIGH" to "⚡ High"
+        ).forEach { (code, label) ->
+          val isSelected = priority.equals(code, ignoreCase = true)
+          val activeColor = when (code) {
+            "HIGH" -> Color(0xFFFF5252)
+            "IMPORTANT" -> Color(0xFFFFD54F)
+            else -> CyanNeon
+          }
+          Box(
+            modifier = Modifier
+              .weight(1f)
+              .clip(RoundedCornerShape(10.dp))
+              .background(if (isSelected) activeColor.copy(alpha = 0.2f) else DarkSurfaceElevated)
+              .border(1.dp, if (isSelected) activeColor else DarkSurfaceBorder, RoundedCornerShape(10.dp))
+              .clickable { priority = code }
+              .padding(vertical = 9.dp),
+            contentAlignment = Alignment.Center
+          ) {
+            Text(
+              text = label,
+              color = if (isSelected) activeColor else TextSecondary,
+              fontSize = 11.sp,
+              fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+            )
+          }
+        }
+      }
+
+      Spacer(modifier = Modifier.height(16.dp))
+
       // Extra Task Switch
       Row(
         modifier = Modifier
@@ -336,14 +383,26 @@ fun TaskBottomSheet(
       Button(
         onClick = {
           if (name.isNotBlank()) {
-            onSave(
-              initialTask?.id ?: 0L,
-              name.trim(),
-              timeMinutes,
-              category.trim().ifEmpty { "Routine" },
-              notes.trim(),
-              isExtra
-            )
+            if (onSaveWithPriority != null) {
+              onSaveWithPriority(
+                initialTask?.id ?: 0L,
+                name.trim(),
+                timeMinutes,
+                category.trim().ifEmpty { "Routine" },
+                notes.trim(),
+                isExtra,
+                priority
+              )
+            } else {
+              onSave(
+                initialTask?.id ?: 0L,
+                name.trim(),
+                timeMinutes,
+                category.trim().ifEmpty { "Routine" },
+                notes.trim(),
+                isExtra
+              )
+            }
             onDismiss()
           }
         },

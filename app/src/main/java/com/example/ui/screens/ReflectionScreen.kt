@@ -118,7 +118,8 @@ fun ReflectionScreen(
         onQuickAddEntryClick = {
           editingEntry = null
           isAddingEntry = true
-        }
+        },
+        onBack = { viewModel.navigateBack() }
       )
     } else {
       // SCREEN 2: PERSON PROFILE (Detailed Timeline, Filters, Download)
@@ -204,7 +205,8 @@ private fun JournalistHomeScreen(
   allEntries: List<JournalistEntryEntity>,
   onSelectPerson: (JournalistPersonEntity) -> Unit,
   onAddPersonClick: () -> Unit,
-  onQuickAddEntryClick: () -> Unit
+  onQuickAddEntryClick: () -> Unit,
+  onBack: () -> Unit = {}
 ) {
   Box(modifier = Modifier.fillMaxSize()) {
     LazyColumn(
@@ -214,19 +216,20 @@ private fun JournalistHomeScreen(
     ) {
       // Header
       item {
-        Column {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
           Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
           ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-              Icon(
-                imageVector = Icons.Default.RateReview,
-                contentDescription = null,
-                tint = CyanNeon,
-                modifier = Modifier.size(16.dp)
-              )
+              IconButton(onClick = onBack, modifier = Modifier.size(36.dp)) {
+                Icon(
+                  imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                  contentDescription = "Back",
+                  tint = TextPrimary
+                )
+              }
               Spacer(modifier = Modifier.width(6.dp))
               Text(
                 text = "NEUTRAL JOURNALIST",

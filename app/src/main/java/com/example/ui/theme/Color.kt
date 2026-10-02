@@ -3,84 +3,134 @@ package com.example.ui.theme
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 
-// Cinematic Deep Dark Canvas
-val DarkBackground = Color(0xFF07090E)        // Obsidian Void
-val DarkBackgroundElevated = Color(0xFF0D101A) // Deep Night
-val DarkSurface = Color(0xFF121624)           // Glass Core
-val DarkSurfaceElevated = Color(0xFF181E30)   // Layered Glass Card
-val DarkSurfaceHighlight = Color(0xFF222B42)  // High-light surface
-val DarkSurfaceBorder = Color(0xFF232B40)     // Thin crisp border
-val DarkSurfaceBorderSubtle = Color(0xFF1A2133)
+// ============================================================================
+// LUXURY CHRONOGRAPH WATCH DESIGN PALETTE ("Precision Instrument")
+// ============================================================================
 
-// Luminous Accents
-val CyanNeon = Color(0xFF00F0FF)              // Electric Cyan / Teal
-val CyanGlow = Color(0xFF00E5FF)
-val CyanDim = Color(0xFF006875)
-val CyanMuted = Color(0xFF003840)
+// Warm Obsidian Charcoal Surfaces
+val ObsidianCharcoal = Color(0xFF14120E)        // #14120E Primary Background
+val ObsidianElevated = Color(0xFF1A1713)        // Elevated Dial/Plate
+val ObsidianCard = Color(0xFF221E18)            // Brushed Subdial Card
+val ObsidianSurfaceElevated = Color(0xFF2B251E) // Higher Elevation
+val ObsidianSurfaceHighlight = Color(0xFF373027)// Inset Bezel / Active Plate
+val ObsidianBorder = Color(0xFF383126)          // Hairline Brass/Charcoal Border
+val ObsidianBorderSubtle = Color(0xFF27221A)    // Very Subtle Divider
+val ObsidianTickMark = Color(0xFF453D30)        // Chrono Bezel Tick Mark
 
-val VioletNeon = Color(0xFF818CF8)            // Luminous Indigo / Violet
-val VioletDeep = Color(0xFF4338CA)
-val VioletGlow = Color(0xFFA855F7)            // Electric Amethyst
+// Primary Accent: Luxury Brass / Horological Gold
+val GoldBrass = Color(0xFFC9A15B)               // #C9A15B Classic Brass/Gold
+val GoldHighlight = Color(0xFFDFBE7E)           // Champagne Gold Highlight
+val GoldDark = Color(0xFF8B6F39)                // Deep Bronze Gold
+val GoldMuted = Color(0xFF5A4826)               // Muted Antique Gold
+val GoldSubtleSurface = Color(0x1FC9A15B)       // 12% Gold Tint for Surfaces
 
-val BlueAccent = Color(0xFF38BDF8)            // Sky Blue Accent
-val BlueGlow = Color(0xFF0284C7)
+// Warm Typography Hierarchy
+val WarmOffWhite = Color(0xFFF3EEDD)            // #F3EEDD Primary Text
+val WarmParchment = Color(0xFFBDB49F)           // Secondary Off-White
+val WarmMuted = Color(0xFF857D6C)               // Muted Subtitle / Indices
+val WarmDisabled = Color(0xFF554F43)            // Disabled Text
 
-// Semantic Status Lighting (Refined & Subtle, not gaudy)
-val StatusComplete = Color(0xFF10B981)        // Pure Mint Emerald
-val StatusCompleteGlow = Color(0xFF059669)
-val StatusCompleteContainer = Color(0xFF064E3B)
-val StatusCompleteSurface = Color(0x1F10B981)
+// Supporting Instrument Colors (Muted, Sophisticated, Horological)
+val SageGreen = Color(0xFF7D9B76)               // Completed / In-Sync / Target Met
+val SageGreenGlow = Color(0xFF96B88E)
+val SageGreenSurface = Color(0x1F7D9B76)
 
-val StatusPartial = Color(0xFFF59E0B)         // Warm Amber Sun
-val StatusPartialGlow = Color(0xFFD97706)
-val StatusPartialContainer = Color(0xFF78350F)
-val StatusPartialSurface = Color(0x1FF59E0B)
+val DustyRose = Color(0xFFC87D7D)               // Missed / Alert
+val DustyRoseGlow = Color(0xFFDE9595)
+val DustyRoseSurface = Color(0x1FC87D7D)
 
-val StatusMissed = Color(0xFFF43F5E)          // Neon Crimson Rose
-val StatusMissedGlow = Color(0xFFE11D48)
-val StatusMissedContainer = Color(0xFF881337)
-val StatusMissedSurface = Color(0x1FF43F5E)
+val MutedPlum = Color(0xFF96789C)               // Partial / Evening / Reflection
+val MutedPlumGlow = Color(0xFFB292B8)
+val MutedPlumSurface = Color(0x1F96789C)
 
-// Today Extra Task Theme (Electrified Amethyst & Gold)
-val ExtraTaskAccent = Color(0xFFC084FC)       // Electric Violet / Lilac
-val ExtraTaskGlow = Color(0xFFA855F7)
-val ExtraTaskContainer = Color(0xFF3B0764)
-val ExtraTaskSurface = Color(0x22A855F7)
+val IceBlue = Color(0xFF7AA2BA)                 // Focus / Water / Calm Indices
+val IceBlueGlow = Color(0xFF96BDD4)
+val IceBlueSurface = Color(0x1F7AA2BA)
 
-// Premium Typography Hierarchy
-val TextPrimary = Color(0xFFF8FAFC)           // Pure Titanium Crisp
-val TextSecondary = Color(0xFF94A3B8)         // Cool Slate
-val TextMuted = Color(0xFF64748B)             // Deep Neutral
-val TextDisabled = Color(0xFF475569)
+// Backward-Compatible Semantic Tokens (Mapped to Luxury Palette - No Neon!)
+val DarkBackground = ObsidianCharcoal
+val DarkBackgroundElevated = ObsidianElevated
+val DarkSurface = ObsidianCard
+val DarkSurfaceElevated = ObsidianSurfaceElevated
+val DarkSurfaceHighlight = ObsidianSurfaceHighlight
+val DarkSurfaceBorder = ObsidianBorder
+val DarkSurfaceBorderSubtle = ObsidianBorderSubtle
 
-// Luxury Gradients
+val CyanNeon = GoldBrass                       // Replaced electric cyan with Gold/Brass
+val CyanGlow = GoldHighlight
+val CyanDim = GoldDark
+val CyanMuted = GoldMuted
+
+val VioletNeon = MutedPlum                     // Replaced violet neon with Muted Plum
+val VioletDeep = ObsidianElevated
+val VioletGlow = GoldHighlight
+
+val BlueAccent = IceBlue
+val BlueGlow = IceBlueGlow
+
+val StatusComplete = SageGreen                 // Sage Green
+val StatusCompleteGlow = SageGreenGlow
+val StatusCompleteContainer = Color(0xFF263324)
+val StatusCompleteSurface = SageGreenSurface
+
+val StatusPartial = MutedPlum                  // Muted Plum
+val StatusPartialGlow = MutedPlumGlow
+val StatusPartialContainer = Color(0xFF332536)
+val StatusPartialSurface = MutedPlumSurface
+
+val StatusMissed = DustyRose                   // Dusty Rose
+val StatusMissedGlow = DustyRoseGlow
+val StatusMissedContainer = Color(0xFF382323)
+val StatusMissedSurface = DustyRoseSurface
+
+val ExtraTaskAccent = GoldHighlight
+val ExtraTaskGlow = GoldBrass
+val ExtraTaskContainer = ObsidianElevated
+val ExtraTaskSurface = GoldSubtleSurface
+
+val TextPrimary = WarmOffWhite
+val TextSecondary = WarmParchment
+val TextMuted = WarmMuted
+val TextDisabled = WarmDisabled
+
+// Chronograph Instrument Gradients
 val GlassGradient = Brush.verticalGradient(
   colors = listOf(
-    Color(0xFF1A2033).copy(alpha = 0.85f),
-    Color(0xFF101422).copy(alpha = 0.95f)
+    ObsidianElevated.copy(alpha = 0.95f),
+    ObsidianCharcoal.copy(alpha = 0.98f)
   )
 )
 
 val CardBorderGradient = Brush.linearGradient(
   colors = listOf(
-    CyanNeon.copy(alpha = 0.45f),
-    VioletNeon.copy(alpha = 0.25f),
-    DarkSurfaceBorder
+    GoldBrass.copy(alpha = 0.45f),
+    ObsidianBorder,
+    GoldDark.copy(alpha = 0.25f)
   )
 )
 
 val ActiveCardBorderGradient = Brush.linearGradient(
   colors = listOf(
-    CyanNeon,
-    BlueAccent,
-    VioletGlow
+    GoldHighlight,
+    GoldBrass,
+    GoldDark
   )
 )
 
 val ExtraTaskBorderGradient = Brush.linearGradient(
   colors = listOf(
-    ExtraTaskAccent.copy(alpha = 0.8f),
-    VioletGlow.copy(alpha = 0.4f),
-    DarkSurfaceBorder
+    GoldHighlight.copy(alpha = 0.6f),
+    GoldBrass.copy(alpha = 0.4f),
+    ObsidianBorder
+  )
+)
+
+val ChronoDialGradient = Brush.sweepGradient(
+  colors = listOf(
+    GoldDark,
+    GoldBrass,
+    GoldHighlight,
+    GoldBrass,
+    GoldDark
   )
 )

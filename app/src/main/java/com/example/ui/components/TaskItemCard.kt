@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.DropdownMenu
@@ -72,11 +73,13 @@ fun TaskItemCard(
   onDelete: () -> Unit,
   modifier: Modifier = Modifier,
   isCurrentTask: Boolean = false,
-  isNextTask: Boolean = false
+  isNextTask: Boolean = false,
+  isFutureTask: Boolean = false
 ) {
   var menuExpanded by remember { mutableStateOf(false) }
 
   val cardBorderBrush = when {
+    isFutureTask -> Brush.linearGradient(listOf(DarkSurfaceBorder.copy(alpha = 0.35f), DarkSurfaceBorder.copy(alpha = 0.15f)))
     task.isExtra -> ExtraTaskBorderGradient
     isCurrentTask -> ActiveCardBorderGradient
     isNextTask -> Brush.linearGradient(listOf(VioletNeon.copy(alpha = 0.6f), DarkSurfaceBorder))
@@ -84,6 +87,7 @@ fun TaskItemCard(
   }
 
   val cardBackground = when {
+    isFutureTask -> DarkSurface.copy(alpha = 0.45f)
     task.isExtra -> ExtraTaskSurface
     isCurrentTask -> DarkSurfaceElevated.copy(alpha = 0.95f)
     else -> DarkSurfaceElevated.copy(alpha = 0.85f)
@@ -100,7 +104,7 @@ fun TaskItemCard(
         shape = RoundedCornerShape(18.dp)
       )
       .padding(horizontal = 14.dp, vertical = 12.dp)
-      .testTag("task_item_${task.id}")
+      .testTag(if (isFutureTask) "task_item_locked_${task.id}" else "task_item_${task.id}")
   ) {
     Column {
       // 1. Top Header Row: Time Badge, Current/Next Indicators, Category, and Action Menu
@@ -196,6 +200,43 @@ fun TaskItemCard(
             )
           }
 
+          // Priority Badge (Feature 6)
+          if (task.priority.equals("HIGH", ignoreCase = true)) {
+            Row(
+              verticalAlignment = Alignment.CenterVertically,
+              modifier = Modifier
+                .clip(RoundedCornerShape(6.dp))
+                .background(Color(0xFFE53935).copy(alpha = 0.2f))
+                .border(1.dp, Color(0xFFE53935).copy(alpha = 0.5f), RoundedCornerShape(6.dp))
+                .padding(horizontal = 6.dp, vertical = 2.dp)
+            ) {
+              Text(
+                text = "⚡ HIGH",
+                color = Color(0xFFFF5252),
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Black,
+                letterSpacing = 0.5.sp
+              )
+            }
+          } else if (task.priority.equals("IMPORTANT", ignoreCase = true)) {
+            Row(
+              verticalAlignment = Alignment.CenterVertically,
+              modifier = Modifier
+                .clip(RoundedCornerShape(6.dp))
+                .background(Color(0xFFFFB300).copy(alpha = 0.2f))
+                .border(1.dp, Color(0xFFFFB300).copy(alpha = 0.5f), RoundedCornerShape(6.dp))
+                .padding(horizontal = 6.dp, vertical = 2.dp)
+            ) {
+              Text(
+                text = "⭐ IMPORTANT",
+                color = Color(0xFFFFD54F),
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 0.5.sp
+              )
+            }
+          }
+
           // Distinguishing Today Extra Task Badge
           if (task.isExtra) {
             Text(
@@ -210,6 +251,32 @@ fun TaskItemCard(
                 .border(1.dp, ExtraTaskAccent.copy(alpha = 0.4f), RoundedCornerShape(6.dp))
                 .padding(horizontal = 6.dp, vertical = 2.dp)
             )
+          }
+
+          if (isFutureTask) {
+            Box(
+              modifier = Modifier
+                .clip(RoundedCornerShape(6.dp))
+                .background(DarkSurfaceBorder.copy(alpha = 0.5f))
+                .border(1.dp, DarkSurfaceBorder.copy(alpha = 0.4f), RoundedCornerShape(6.dp))
+                .padding(horizontal = 6.dp, vertical = 2.dp)
+            ) {
+              Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                  imageVector = Icons.Default.Lock,
+                  contentDescription = "Locked",
+                  tint = TextMuted,
+                  modifier = Modifier.size(10.dp)
+                )
+                Spacer(modifier = Modifier.width(3.dp))
+                Text(
+                  text = "समय आने पर खुलेगा",
+                  color = TextMuted,
+                  fontSize = 9.sp,
+                  fontWeight = FontWeight.Bold
+                )
+              }
+            }
           }
         }
 
@@ -261,7 +328,7 @@ fun TaskItemCard(
       // 2. Task Title & Notes
       Text(
         text = task.name,
-        color = TextPrimary,
+        color = if (isFutureTask) TextMuted else TextPrimary,
         fontSize = 15.sp,
         fontWeight = FontWeight.SemiBold,
         maxLines = 2,
@@ -294,6 +361,7 @@ fun TaskItemCard(
           accentColor = StatusComplete,
           dotEmoji = "🟢",
           onClick = { onStatusChange(TaskStatus.COMPLETE) },
+          enabled = !isFutureTask,
           modifier = Modifier.weight(1f)
         )
 
@@ -304,6 +372,7 @@ fun TaskItemCard(
           accentColor = StatusPartial,
           dotEmoji = "🟡",
           onClick = { onStatusChange(TaskStatus.PARTIAL) },
+          enabled = !isFutureTask,
           modifier = Modifier.weight(1f)
         )
 
@@ -314,6 +383,7 @@ fun TaskItemCard(
           accentColor = StatusMissed,
           dotEmoji = "🔴",
           onClick = { onStatusChange(TaskStatus.MISSED) },
+          enabled = !isFutureTask,
           modifier = Modifier.weight(1f)
         )
       }
@@ -329,15 +399,24 @@ private fun RefinedStatusChip(
   accentColor: Color,
   dotEmoji: String,
   onClick: () -> Unit,
+  enabled: Boolean = true,
   modifier: Modifier = Modifier
 ) {
   val animatedBg by animateColorAsState(
-    targetValue = if (isSelected) accentColor.copy(alpha = 0.18f) else DarkSurface,
+    targetValue = when {
+      !enabled -> DarkSurface.copy(alpha = 0.3f)
+      isSelected -> accentColor.copy(alpha = 0.18f)
+      else -> DarkSurface
+    },
     animationSpec = tween(250),
     label = "chip_bg"
   )
   val animatedBorder by animateColorAsState(
-    targetValue = if (isSelected) accentColor else DarkSurfaceBorder,
+    targetValue = when {
+      !enabled -> DarkSurfaceBorder.copy(alpha = 0.3f)
+      isSelected -> accentColor
+      else -> DarkSurfaceBorder
+    },
     animationSpec = tween(250),
     label = "chip_border"
   )
@@ -348,7 +427,7 @@ private fun RefinedStatusChip(
       .clip(RoundedCornerShape(9.dp))
       .background(animatedBg)
       .border(1.dp, animatedBorder, RoundedCornerShape(9.dp))
-      .clickable { onClick() }
+      .clickable(enabled = enabled) { onClick() }
       .padding(horizontal = 4.dp),
     contentAlignment = Alignment.Center
   ) {
@@ -356,14 +435,16 @@ private fun RefinedStatusChip(
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.Center
     ) {
+      if (enabled) {
+        Text(
+          text = dotEmoji,
+          fontSize = 10.sp
+        )
+        Spacer(modifier = Modifier.width(4.dp))
+      }
       Text(
-        text = dotEmoji,
-        fontSize = 10.sp
-      )
-      Spacer(modifier = Modifier.width(4.dp))
-      Text(
-        text = label,
-        color = if (isSelected) accentColor else TextSecondary,
+        text = if (enabled) label else "🔒 Locked",
+        color = if (!enabled) TextMuted.copy(alpha = 0.5f) else if (isSelected) accentColor else TextSecondary,
         fontSize = 10.sp,
         fontWeight = if (isSelected) FontWeight.Black else FontWeight.Medium
       )

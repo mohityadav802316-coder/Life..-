@@ -6,11 +6,16 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Update
+import com.example.data.model.CategoryAggregate
+import com.example.data.model.CycleDayAverage
+import com.example.data.model.DailyNoteEntity
 import com.example.data.model.DailySnapshotEntity
 import com.example.data.model.DayTaskEntity
 import com.example.data.model.GoalEntity
 import com.example.data.model.JournalistEntryEntity
 import com.example.data.model.JournalistPersonEntity
+import com.example.data.model.MeditationSessionEntity
+import com.example.data.model.OverallStats
 import com.example.data.model.ReflectionEntity
 import com.example.data.model.RoutineTemplateEntity
 import com.example.data.model.UserSettingsEntity
@@ -35,6 +40,22 @@ interface TaskDao {
 
   @Query("SELECT DISTINCT date FROM day_tasks ORDER BY date DESC")
   fun getDistinctDates(): Flow<List<String>>
+
+  @Query("""
+    SELECT 
+      category,
+      COUNT(*) AS totalCount,
+      COALESCE(SUM(CASE WHEN status = 'COMPLETE' THEN 1 ELSE 0 END), 0) AS completedCount,
+      COALESCE(SUM(CASE WHEN status = 'PARTIAL' THEN 1 ELSE 0 END), 0) AS partialCount
+    FROM day_tasks
+    WHERE category IS NOT NULL AND category != ''
+    GROUP BY category
+    ORDER BY totalCount DESC
+  """)
+  fun getCategoryAggregates(): Flow<List<CategoryAggregate>>
+
+  @Query("SELECT * FROM day_tasks WHERE id = :id LIMIT 1")
+  suspend fun getTaskById(id: Long): DayTaskEntity?
 
   @Insert(onConflict = OnConflictStrategy.REPLACE)
   suspend fun insertTask(task: DayTaskEntity): Long
@@ -71,6 +92,9 @@ interface RoutineDao {
 
   @Query("SELECT * FROM routine_templates WHERE isActive = 1 ORDER BY timeMinutes ASC, orderIndex ASC")
   suspend fun getActiveTemplatesSync(): List<RoutineTemplateEntity>
+
+  @Query("SELECT * FROM routine_templates WHERE id = :id LIMIT 1")
+  suspend fun getRoutineTemplateById(id: Long): RoutineTemplateEntity?
 
   @Insert(onConflict = OnConflictStrategy.REPLACE)
   suspend fun insertRoutineTemplate(template: RoutineTemplateEntity): Long
@@ -156,6 +180,9 @@ interface UserSettingsDao {
   @Query("SELECT * FROM user_settings WHERE id = 1 LIMIT 1")
   suspend fun getSettingsSync(): UserSettingsEntity?
 
+  @Query("SELECT * FROM user_settings WHERE id = 1 LIMIT 1")
+  suspend fun getSettingsDirect(): UserSettingsEntity?
+
   @Insert(onConflict = OnConflictStrategy.REPLACE)
   suspend fun insertOrUpdate(settings: UserSettingsEntity)
 }
@@ -176,6 +203,30 @@ interface DailySnapshotDao {
 
   @Query("SELECT * FROM daily_snapshots ORDER BY date DESC")
   suspend fun getAllSnapshotsSync(): List<DailySnapshotEntity>
+
+  @Query("""
+    SELECT 
+      COUNT(*) AS totalDays,
+      COALESCE(SUM(totalTasks), 0) AS totalTasks,
+      COALESCE(SUM(completedCount), 0) AS completedTasks,
+      COALESCE(SUM(partialCount), 0) AS partialTasks,
+      COALESCE(SUM(missedCount), 0) AS missedTasks,
+      COALESCE(SUM(totalScore), 0.0) AS totalScore,
+      COALESCE(AVG(completionPercentage), 0.0) AS averagePercentage
+    FROM daily_snapshots
+  """)
+  fun getOverallStats(): Flow<OverallStats>
+
+  @Query("""
+    SELECT 
+      dayOfCycle,
+      COUNT(*) AS dayCount,
+      COALESCE(AVG(completionPercentage), 0.0) AS avgPercentage
+    FROM daily_snapshots
+    GROUP BY dayOfCycle
+    ORDER BY dayOfCycle ASC
+  """)
+  fun getCycleDayAverages(): Flow<List<CycleDayAverage>>
 
   @Insert(onConflict = OnConflictStrategy.REPLACE)
   suspend fun insertOrUpdate(snapshot: DailySnapshotEntity)
@@ -252,3 +303,58 @@ interface JournalistEntryDao {
   @Query("DELETE FROM journalist_entries WHERE personId = :personId")
   suspend fun deleteEntriesForPerson(personId: String)
 }
+
+@Dao
+interface DailyNoteDao {
+  @Query("SELECT * FROM daily_notes WHERE date = :date LIMIT 1")
+  fun getNoteForDate(date: String): Flow<DailyNoteEntity?>
+
+  @Query("SELECT * FROM daily_notes WHERE date = :date LIMIT 1")
+  suspend fun getNoteForDateSync(date: String): DailyNoteEntity?
+
+  @Query("SELECT * FROM daily_notes ORDER BY date DESC")
+  fun getAllNotes(): Flow<List<DailyNoteEntity>>
+
+  @Query("SELECT * FROM daily_notes ORDER BY date DESC")
+  suspend fun getAllNotesSync(): List<DailyNoteEntity>
+
+  @Query("SELECT * FROM daily_notes WHERE date >= :startDate AND date <= :endDate ORDER BY date ASC")
+  fun getNotesBetweenDates(startDate: String, endDate: String): Flow<List<DailyNoteEntity>>
+
+  @Insert(onConflict = OnConflictStrategy.REPLACE)
+  suspend fun insertOrUpdate(note: DailyNoteEntity)
+
+  @Query("DELETE FROM daily_notes WHERE date = :date")
+  suspend fun deleteNoteForDate(date: String)
+
+  @Query("DELETE FROM daily_notes")
+  suspend fun deleteAllNotes()
+}
+
+@Dao
+interface MeditationDao {
+  @Query("SELECT * FROM meditation_sessions ORDER BY timestamp DESC")
+  fun getAllSessions(): Flow<List<MeditationSessionEntity>>
+
+  @Query("SELECT * FROM meditation_sessions ORDER BY timestamp DESC")
+  suspend fun getAllSessionsSync(): List<MeditationSessionEntity>
+
+  @Query("SELECT * FROM meditation_sessions WHERE date = :date ORDER BY timestamp DESC")
+  fun getSessionsForDate(date: String): Flow<List<MeditationSessionEntity>>
+
+  @Query("SELECT * FROM meditation_sessions WHERE date >= :startDate AND date <= :endDate ORDER BY timestamp ASC")
+  fun getSessionsBetweenDates(startDate: String, endDate: String): Flow<List<MeditationSessionEntity>>
+
+  @Insert(onConflict = OnConflictStrategy.REPLACE)
+  suspend fun insertSession(session: MeditationSessionEntity): Long
+
+  @Query("DELETE FROM meditation_sessions WHERE id = :id")
+  suspend fun deleteSessionById(id: Long)
+
+  @Query("SELECT COALESCE(SUM(completedSeconds), 0) / 60 FROM meditation_sessions WHERE isCompleted = 1")
+  fun getTotalMeditationMinutes(): Flow<Int>
+
+  @Query("SELECT COUNT(*) FROM meditation_sessions WHERE isCompleted = 1")
+  fun getCompletedSessionsCount(): Flow<Int>
+}
+
