@@ -48,8 +48,17 @@ class ExampleRobolectricTest {
     val db = androidx.room.Room.inMemoryDatabaseBuilder(context, com.example.data.db.LifeTrackerDatabase::class.java).build()
     val repo = com.example.data.repository.LifeTrackerRepository(db)
 
-    // Day 1: Initialize defaults and day 1
+    // Day 1: Initialize defaults and add user-created routine
     repo.initializeDefaultsIfNeeded("2026-09-21")
+    repo.insertRoutineTemplate(
+      com.example.data.model.RoutineTemplateEntity(
+        name = "सुबह का योग",
+        timeMinutes = 360,
+        category = "स्वास्थ्य",
+        daysMask = 127
+      )
+    )
+    repo.ensureDayInitialized("2026-09-21", 1)
     val day1Tasks = repo.taskDao.getTasksForDateSync("2026-09-21")
     org.junit.Assert.assertTrue(day1Tasks.isNotEmpty())
 

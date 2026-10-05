@@ -222,7 +222,11 @@ class BlackScreenGestureDetector(
       }
 
       MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-        val duration = System.currentTimeMillis() - downTimestamp
+        val duration = if (event.eventTime >= event.downTime && event.downTime > 0) {
+          event.eventTime - event.downTime
+        } else {
+          System.currentTimeMillis() - downTimestamp
+        }
 
         // Strictly check that at least 3 fingers were on the screen during this touch interaction
         if (maxPointerCountSeen < 3) {
@@ -322,7 +326,7 @@ class BlackScreenGestureDetector(
     val absY = abs(avgDeltaY)
 
     // Check Tap: duration <= 700ms and minimal movement
-    if (durationMs in 60..700 && maxDistanceMoved <= tapMaxMovement) {
+    if (durationMs in 0..700 && maxDistanceMoved <= tapMaxMovement) {
       return BlackScreenGestureType.THREE_FINGER_TAP
     }
 

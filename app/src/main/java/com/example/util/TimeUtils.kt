@@ -18,6 +18,13 @@ object TimeUtils {
    * Formats minutes from midnight (0..1439) into strictly 12-hour AM/PM format.
    * e.g., 300 -> "5:00 AM", 780 -> "1:00 PM", 1320 -> "10:00 PM"
    */
+  fun formatDuration(durationMs: Long): String {
+    val totalSeconds = (durationMs / 1000).coerceAtLeast(0L)
+    val minutes = totalSeconds / 60
+    val seconds = totalSeconds % 60
+    return String.format(Locale.US, "%02d:%02d", minutes, seconds)
+  }
+
   fun minutesTo12Hour(totalMinutes: Int): String {
     val normalizedMinutes = ((totalMinutes % 1440) + 1440) % 1440
     val hour24 = normalizedMinutes / 60
@@ -286,5 +293,61 @@ object TimeUtils {
     val mins = (totalSeconds / 60).coerceAtLeast(0)
     val secs = (totalSeconds % 60).coerceAtLeast(0)
     return String.format(Locale.US, "%02d:%02d", mins, secs)
+  }
+
+  /**
+   * Formats ISO date (e.g. "2026-10-02") into Hindi date: "शुक्रवार, 2 अक्टूबर"
+   */
+  fun getHindiDateDisplay(dateStr: String): String {
+    return try {
+      val parsed = isoDateFormat.parse(dateStr) ?: Date()
+      val cal = Calendar.getInstance().apply { time = parsed }
+      val dayOfWeek = when (cal.get(Calendar.DAY_OF_WEEK)) {
+        Calendar.SUNDAY -> "रविवार"
+        Calendar.MONDAY -> "सोमवार"
+        Calendar.TUESDAY -> "मंगलवार"
+        Calendar.WEDNESDAY -> "बुधवार"
+        Calendar.THURSDAY -> "गुरुवार"
+        Calendar.FRIDAY -> "शुक्रवार"
+        Calendar.SATURDAY -> "शनिवार"
+        else -> ""
+      }
+      val month = when (cal.get(Calendar.MONTH)) {
+        Calendar.JANUARY -> "जनवरी"
+        Calendar.FEBRUARY -> "फ़रवरी"
+        Calendar.MARCH -> "मार्च"
+        Calendar.APRIL -> "अप्रैल"
+        Calendar.MAY -> "मई"
+        Calendar.JUNE -> "जून"
+        Calendar.JULY -> "जुलाई"
+        Calendar.AUGUST -> "अगस्त"
+        Calendar.SEPTEMBER -> "सितंबर"
+        Calendar.OCTOBER -> "अक्टूबर"
+        Calendar.NOVEMBER -> "नवंबर"
+        Calendar.DECEMBER -> "दिसंबर"
+        else -> ""
+      }
+      val dayOfMonth = cal.get(Calendar.DAY_OF_MONTH)
+      "$dayOfWeek, $dayOfMonth $month"
+    } catch (_: Exception) {
+      dateStr
+    }
+  }
+
+  /**
+   * Returns Hindi greeting according to time of day:
+   * 4:00 AM - 11:59 AM -> "सुप्रभात"
+   * 12:00 PM - 4:59 PM -> "शुभ दोपहर"
+   * 5:00 PM - 8:59 PM -> "शुभ संध्या"
+   * 9:00 PM - 3:59 AM -> "शुभ रात्रि"
+   */
+  fun getHindiGreeting(currentMinutes: Int): String {
+    val hour = ((currentMinutes % 1440) + 1440) % 1440 / 60
+    return when (hour) {
+      in 4..11 -> "सुप्रभात"
+      in 12..16 -> "शुभ दोपहर"
+      in 17..20 -> "शुभ संध्या"
+      else -> "शुभ रात्रि"
+    }
   }
 }

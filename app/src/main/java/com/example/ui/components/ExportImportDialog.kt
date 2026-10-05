@@ -77,6 +77,7 @@ enum class ExportFormatTab(val title: String) {
 
 @Composable
 fun ExportImportDialog(
+  initialTab: ExportFormatTab = ExportFormatTab.AI_PROMPT,
   onDismiss: () -> Unit,
   onGenerateContent: suspend (ExportFormatTab) -> String,
   onImportJson: (String, (Boolean, String) -> Unit) -> Unit
@@ -84,7 +85,7 @@ fun ExportImportDialog(
   val context = LocalContext.current
   val scope = rememberCoroutineScope()
 
-  var selectedTab by remember { mutableStateOf(ExportFormatTab.AI_PROMPT) }
+  var selectedTab by remember { mutableStateOf(initialTab) }
   var contentText by remember { mutableStateOf("") }
   var isLoading by remember { mutableStateOf(true) }
   var importInputText by remember { mutableStateOf("") }

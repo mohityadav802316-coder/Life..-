@@ -80,20 +80,51 @@ class ShortContentAccessibilityService : AccessibilityService() {
       FocusBlockingOverlayManager.dismiss()
     }
 
-    // 1. BROAD FOCUS MODE BLOCKING CHECK (BlockSite-Style)
+    // 0. STRICT LOCK: INSTANT ON-DEVICE ADULT CONTENT DETECTION
+    val adultResult = com.example.focus.AdultContentDetector.inspectEvent(this, event)
+    if (adultResult != null && adultResult.isAdult) {
+      Log.w("ShortContentService", "ADULT CONTENT DETECTED: matched '${adultResult.matchedTerm}' in package $packageName! Activating 15-minute Strict Lock.")
+
+      // Immediately kick user out of adult content to Home screen
+      performGlobalAction(GLOBAL_ACTION_HOME)
+
+      // Activate unbreakable 15-minute Strict Lock Focus Mode
+      FocusModeManager.activateStrictLock(
+        context = this,
+        durationMinutes = 15,
+        reason = "वयस्क सामग्री अवरोधित: ${adultResult.matchedTerm}",
+        triggerWord = adultResult.matchedTerm,
+        packageName = packageName
+      )
+
+      // Immediately display unbreakable strict blocking overlay if permitted
+      if (Settings.canDrawOverlays(this)) {
+        FocusBlockingOverlayManager.showStrictLock(this, packageName, adultResult.matchedTerm)
+      }
+      return
+    }
+
+    // 1. BROAD FOCUS MODE / STRICT LOCK BLOCKING CHECK (BlockSite-Style)
     if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-      if (FocusModeManager.isFocusModeActive(this)) {
+      val isStrict = FocusModeManager.isStrictLockActive(this)
+      val isFocus = FocusModeManager.isFocusModeActive(this)
+
+      if (isStrict || isFocus) {
         if (!FocusModeManager.isPackageAllowed(this, packageName)) {
-          // Unallowed application opened during Focus session
+          // Unallowed application opened during Focus session / Strict Lock
+          // Requirement: "बाकी हर ऐप खुलते ही होम पर भेज दो।"
+          performGlobalAction(GLOBAL_ACTION_HOME)
+
           if (Settings.canDrawOverlays(this)) {
-            FocusBlockingOverlayManager.show(this, packageName)
-          } else {
-            // Safe fallback if overlay permission not granted: return to Home
-            performGlobalAction(GLOBAL_ACTION_HOME)
+            if (isStrict) {
+              FocusBlockingOverlayManager.showStrictLock(this, packageName)
+            } else {
+              FocusBlockingOverlayManager.show(this, packageName)
+            }
           }
           return
         } else {
-          // User navigated to an allowed application, Life Tracker, or Home Launcher
+          // User navigated to an allowed application, Life Tracker, Phone/Dialer, or Home Launcher
           FocusBlockingOverlayManager.dismiss()
         }
       } else {

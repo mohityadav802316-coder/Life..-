@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Notifications
@@ -308,7 +309,7 @@ fun PermissionsStatusSettingsCategory() {
     // 5. BATTERY OPTIMIZATION EXEMPTION
     PermissionItemCard(
       title = "बैटरी ऑप्टिमाइज़ेशन छूट (No Battery Kill)",
-      subtitle = "Android सिस्टम को बैकग्राउंड में अलार्म और ब्लैक स्क्रीन सर्विस बंद करने से रोकता है",
+      subtitle = "अलार्म, दैनिक स्वचालित बैकअप और ब्लैक स्क्रीन को बैकग्राउंड में बिना रुकावट चलाने के लिए",
       icon = Icons.Default.BatteryChargingFull,
       accentColor = SageGreen,
       isGranted = hasBatteryExemption,
@@ -342,6 +343,24 @@ fun PermissionsStatusSettingsCategory() {
         } else {
           audioLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
         }
+      }
+    )
+
+    // 7. AUTO-BACKUP FOLDER STORAGE
+    val isBackupFolderAccessible = remember(refreshTrigger) { com.example.backup.BackupPreferences.isFolderAccessible(context) }
+    val backupFolderDisplayName = remember(refreshTrigger) { com.example.backup.BackupPreferences.getFolderDisplayName(context) }
+    PermissionItemCard(
+      title = "स्वचालित बैकअप फ़ोल्डर (SAF Folder)",
+      subtitle = if (isBackupFolderAccessible)
+        "सक्रिय: ${backupFolderDisplayName ?: "Documents"} (अनइंस्टॉल के बाद भी सुरक्षित)"
+      else
+        "अपरिभाषित! अनइंस्टॉल के बाद डेटा खो सकता है। कृपया Documents में फ़ोल्डर चुनें",
+      icon = Icons.Default.Folder,
+      accentColor = if (isBackupFolderAccessible) SageGreen else DustyRose,
+      isGranted = isBackupFolderAccessible,
+      onGrantClick = {
+        // Prompt to select folder in Settings > Data & Backup
+        Toast.makeText(context, "कृपया सेटिंग्स > डेटा एवं बैकअप में जाकर फ़ोल्डर चुनें", Toast.LENGTH_LONG).show()
       }
     )
 

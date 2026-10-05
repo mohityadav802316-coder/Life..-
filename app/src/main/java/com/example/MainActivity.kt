@@ -18,6 +18,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.core.content.ContextCompat
 import com.example.alarm.AlarmScheduler
+import kotlinx.coroutines.launch
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -77,6 +78,7 @@ import androidx.compose.ui.unit.sp
 import com.example.meditation.MeditationAudioService
 import com.example.ui.screens.AlarmCenterScreen
 import com.example.ui.screens.CalendarScreen
+import com.example.ui.screens.ExpenseDiaryScreen
 import com.example.ui.screens.MeditationScreen
 import com.example.ui.screens.MusicScreen
 import com.example.ui.screens.ReflectionScreen
@@ -125,6 +127,12 @@ class MainActivity : ComponentActivity() {
     AlarmScheduler.rescheduleAllTimetableAlarms(this)
     com.example.focus.FocusModeManager.onBootOrScheduleChange(this)
     com.example.blackscreen.BlackScreenManager.syncServiceState(this)
+
+    // Ensure automatic daily backup is scheduled and check for catch-up backup
+    com.example.backup.DailyBackupWorker.rescheduleAfterBoot(this)
+    kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+      com.example.backup.BackupManager.checkAndPerformCatchUp(applicationContext)
+    }
 
     setContent {
       LifeTrackerTheme {
@@ -219,6 +227,11 @@ fun LifeTrackerApp(viewModel: LifeTrackerViewModel) {
   val isFocusModeActive by viewModel.isFocusModeActive.collectAsState()
   val isBlackScreenOverlayActive by viewModel.isBlackScreenOverlayActive.collectAsState()
 
+  // Automatically preserve existing data and ensure startup continues smoothly without forced prompts
+  LaunchedEffect(Unit) {
+    com.example.backup.BackupPreferences.setFirstLaunchHandled(context, true)
+  }
+
   if (isFocusModeActive) {
     com.example.ui.screens.FocusRestrictionScreen(viewModel = viewModel)
   } else if (isBlackScreenOverlayActive) {
@@ -273,6 +286,7 @@ fun LifeTrackerApp(viewModel: LifeTrackerViewModel) {
               MainTab.REFLECTION -> ReflectionScreen(viewModel = viewModel)
               MainTab.TIMELINE -> TimelineScreen(viewModel = viewModel)
               MainTab.SHORT_CONTENT_TRACKER -> ShortContentTrackerScreen(viewModel = viewModel)
+              MainTab.EXPENSE_DIARY -> ExpenseDiaryScreen(viewModel = viewModel)
             }
           }
         }
@@ -287,94 +301,68 @@ fun LifeTrackerBottomBar(
   onTabSelected: (MainTab) -> Unit,
   modifier: Modifier = Modifier
 ) {
+  // Solid background container extending edge-to-edge with system navigation bar insets
   Box(
     modifier = modifier
       .fillMaxWidth()
-      .navigationBarsPadding()
-      .padding(horizontal = 18.dp, vertical = 6.dp),
+      .background(com.example.ui.theme.ObsidianElevated)
+      .border(
+        width = 1.dp,
+        color = com.example.ui.theme.ObsidianBorderSubtle,
+        shape = androidx.compose.ui.graphics.RectangleShape
+      )
+      .navigationBarsPadding(),
     contentAlignment = Alignment.Center
   ) {
-    // Floating Glassmorphic Pill Container - constrained for tablet/foldable width
-    Box(
+    Row(
       modifier = Modifier
         .fillMaxWidth()
         .widthIn(max = 580.dp)
-        .height(66.dp)
-        .clip(RoundedCornerShape(26.dp))
-        .background(com.example.ui.theme.ObsidianElevated.copy(alpha = 0.95f))
-        .border(
-          width = 1.dp,
-          brush = Brush.linearGradient(
-            listOf(
-              com.example.ui.theme.GoldBrass.copy(alpha = 0.45f),
-              com.example.ui.theme.ObsidianBorder,
-              com.example.ui.theme.GoldDark.copy(alpha = 0.3f)
-            )
-          ),
-          shape = RoundedCornerShape(26.dp)
-        )
-        .padding(horizontal = 6.dp)
+        .height(60.dp)
+        .padding(horizontal = 8.dp),
+      horizontalArrangement = Arrangement.SpaceAround,
+      verticalAlignment = Alignment.CenterVertically
     ) {
-      Row(
-        modifier = Modifier.fillMaxSize(),
-        horizontalArrangement = Arrangement.SpaceAround,
-        verticalAlignment = Alignment.CenterVertically
-      ) {
-        val items = listOf(
-          NavigationItemData(MainTab.TODAY, "Today", Icons.Filled.Home, Icons.Outlined.Home, "tab_today"),
-          NavigationItemData(MainTab.CALENDAR, "Calendar", Icons.Filled.DateRange, Icons.Outlined.DateRange, "tab_calendar"),
-          NavigationItemData(MainTab.REPORT, "Progress", Icons.Filled.Insights, Icons.Filled.Insights, "tab_progress"),
-          NavigationItemData(MainTab.REFLECTION, "Notebook", Icons.Filled.Spa, Icons.Outlined.Spa, "tab_notebook"),
-          NavigationItemData(MainTab.SETTINGS, "Settings", Icons.Filled.Settings, Icons.Outlined.Settings, "tab_settings")
-        )
+      val items = listOf(
+        NavigationItemData(MainTab.TODAY, "आज", Icons.Filled.Home, Icons.Outlined.Home, "tab_today"),
+        NavigationItemData(MainTab.CALENDAR, "कैलेंडर", Icons.Filled.DateRange, Icons.Outlined.DateRange, "tab_calendar"),
+        NavigationItemData(MainTab.REPORT, "प्रगति", Icons.Filled.Insights, Icons.Filled.Insights, "tab_progress"),
+        NavigationItemData(MainTab.SETTINGS, "सेटिंग्स", Icons.Filled.Settings, Icons.Outlined.Settings, "tab_settings")
+      )
 
-        items.forEach { item ->
-          val isSelected = currentTab == item.tab
-          val interactionSource = remember { MutableInteractionSource() }
+      items.forEach { item ->
+        val isSelected = currentTab == item.tab
+        val interactionSource = remember { MutableInteractionSource() }
 
-          Box(
-            modifier = Modifier
-              .weight(1f)
-              .height(50.dp)
-              .clip(RoundedCornerShape(16.dp))
-              .background(
-                if (isSelected) com.example.ui.theme.GoldBrass.copy(alpha = 0.14f) else Color.Transparent
-              )
-              .clickable(
-                interactionSource = interactionSource,
-                indication = androidx.compose.material3.ripple(color = com.example.ui.theme.GoldBrass, bounded = true)
-              ) { onTabSelected(item.tab) }
-              .testTag(item.testTag),
-            contentAlignment = Alignment.Center
+        Box(
+          modifier = Modifier
+            .weight(1f)
+            .height(52.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(
+              interactionSource = interactionSource,
+              indication = androidx.compose.material3.ripple(color = com.example.ui.theme.GoldBrass, bounded = true)
+            ) { onTabSelected(item.tab) }
+            .testTag(item.testTag),
+          contentAlignment = Alignment.Center
+        ) {
+          Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
           ) {
-            Column(
-              horizontalAlignment = Alignment.CenterHorizontally,
-              verticalArrangement = Arrangement.Center
-            ) {
-              Icon(
-                imageVector = if (isSelected) item.selectedIcon else item.unselectedIcon,
-                contentDescription = item.label,
-                tint = if (isSelected) com.example.ui.theme.GoldBrass else com.example.ui.theme.WarmMuted,
-                modifier = Modifier.size(19.dp)
-              )
-              Spacer(modifier = Modifier.height(2.dp))
-              Text(
-                text = item.label,
-                color = if (isSelected) com.example.ui.theme.WarmOffWhite else com.example.ui.theme.WarmMuted,
-                fontSize = 10.sp,
-                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                letterSpacing = 0.3.sp
-              )
-              if (isSelected) {
-                Spacer(modifier = Modifier.height(2.dp))
-                Box(
-                  modifier = Modifier
-                    .size(4.dp)
-                    .clip(CircleShape)
-                    .background(com.example.ui.theme.GoldBrass)
-                )
-              }
-            }
+            Icon(
+              imageVector = if (isSelected) item.selectedIcon else item.unselectedIcon,
+              contentDescription = item.label,
+              tint = if (isSelected) com.example.ui.theme.GoldBrass else com.example.ui.theme.WarmMuted,
+              modifier = Modifier.size(21.dp)
+            )
+            Spacer(modifier = Modifier.height(3.dp))
+            Text(
+              text = item.label,
+              color = if (isSelected) com.example.ui.theme.WarmOffWhite else com.example.ui.theme.WarmMuted,
+              fontSize = 11.sp,
+              fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+            )
           }
         }
       }

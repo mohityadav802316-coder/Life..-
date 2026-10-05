@@ -1,185 +1,95 @@
 package com.example.music
 
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.app.PendingIntent
-import android.app.Service
-import android.content.Context
 import android.content.Intent
-import android.content.pm.ServiceInfo
 import android.os.Build
-import android.os.IBinder
-import android.os.PowerManager
-import androidx.core.app.NotificationCompat
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.session.MediaSession
+import androidx.media3.session.MediaSessionService
 import com.example.MainActivity
-import com.example.R
-import com.example.util.TimeUtils
 
-class MusicPlaybackService : Service() {
+class MusicPlaybackService : MediaSessionService() {
 
-  private var wakeLock: PowerManager.WakeLock? = null
-  private val channelId = "music_playback_channel"
-  private val notificationId = 9977
+  private var mediaSession: MediaSession? = null
 
-  override fun onBind(intent: Intent?): IBinder? = null
-
+  @androidx.annotation.OptIn(UnstableApi::class)
   override fun onCreate() {
     super.onCreate()
-    createNotificationChannel()
-    acquireWakeLock()
-  }
 
-  override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-    val action = intent?.action ?: ACTION_START
     val manager = MusicPlayerManager.getInstance(applicationContext)
+    val player = manager.exoPlayer
 
-    when (action) {
-      ACTION_START -> {
-        try {
-          val notification = buildNotification(manager.playerState.value)
-          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-              notificationId,
-              notification,
-              ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
-            )
-          } else {
-            startForeground(notificationId, notification)
-          }
-        } catch (_: Exception) {}
-      }
-      ACTION_TOGGLE_PLAY -> {
-        manager.togglePlayPause()
-        updateNotification(manager.playerState.value)
-      }
-      ACTION_NEXT -> {
-        manager.next()
-        updateNotification(manager.playerState.value)
-      }
-      ACTION_PREV -> {
-        manager.previous()
-        updateNotification(manager.playerState.value)
-      }
-      ACTION_STOP -> {
-        stopForeground(true)
-        stopSelf()
-        return START_NOT_STICKY
-      }
-      ACTION_UPDATE -> {
-        updateNotification(manager.playerState.value)
-      }
+    val openIntent = Intent(this, MainActivity::class.java).apply {
+      flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+      putExtra(EXTRA_OPEN_MUSIC, true)
     }
 
-    return START_STICKY
-  }
-
-  private fun updateNotification(state: MusicPlayerState) {
-    if (state.currentSong == null) {
-      stopForeground(true)
-      stopSelf()
-      return
-    }
-    val notification = buildNotification(state)
-    val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-    nm?.notify(notificationId, notification)
-  }
-
-  private fun buildNotification(state: MusicPlayerState): Notification {
     val pendingIntentFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
       PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
     } else {
       PendingIntent.FLAG_UPDATE_CURRENT
     }
 
-    val openIntent = Intent(this, MainActivity::class.java).apply {
-      flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-      putExtra(EXTRA_OPEN_MUSIC, true)
+    val sessionActivity = PendingIntent.getActivity(this, 1001, openIntent, pendingIntentFlags)
+
+    val callback = object : MediaSession.Callback {
+      override fun onConnect(
+        session: MediaSession,
+        controller: MediaSession.ControllerInfo
+      ): MediaSession.ConnectionResult {
+        val sessionCommands = MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon().build()
+        val playerCommands = MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS.buildUpon().build()
+        return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
+          .setAvailableSessionCommands(sessionCommands)
+          .setAvailablePlayerCommands(playerCommands)
+          .build()
+      }
+
+      override fun onMediaButtonEvent(
+        session: MediaSession,
+        controllerInfo: MediaSession.ControllerInfo,
+        intent: Intent
+      ): Boolean {
+        // Handle headset and bluetooth media buttons
+        return super.onMediaButtonEvent(session, controllerInfo, intent)
+      }
     }
-    val contentPendingIntent = PendingIntent.getActivity(this, 201, openIntent, pendingIntentFlags)
 
-    // Action: Previous
-    val prevIntent = Intent(this, MusicPlaybackService::class.java).apply {
-      action = ACTION_PREV
-    }
-    val prevPendingIntent = PendingIntent.getService(this, 202, prevIntent, pendingIntentFlags)
-
-    // Action: Play/Pause Toggle
-    val toggleIntent = Intent(this, MusicPlaybackService::class.java).apply {
-      action = ACTION_TOGGLE_PLAY
-    }
-    val togglePendingIntent = PendingIntent.getService(this, 203, toggleIntent, pendingIntentFlags)
-    val toggleTitle = if (state.isPlaying) "Pause" else "Play"
-    val toggleIcon = if (state.isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play
-
-    // Action: Next
-    val nextIntent = Intent(this, MusicPlaybackService::class.java).apply {
-      action = ACTION_NEXT
-    }
-    val nextPendingIntent = PendingIntent.getService(this, 204, nextIntent, pendingIntentFlags)
-
-    val song = state.currentSong
-    val songTitle = song?.title ?: "Life Tracker Music"
-    val songArtist = song?.artist ?: "Tranquil Flow"
-    val situation = state.currentSituation ?: state.currentPlaylist?.name ?: "Routine Music"
-
-    return NotificationCompat.Builder(this, channelId)
-      .setSmallIcon(R.drawable.ic_meditation_notif)
-      .setContentTitle(songTitle)
-      .setContentText("$songArtist • $situation")
-      .setContentIntent(contentPendingIntent)
-      .setOngoing(state.isPlaying)
-      .setOnlyAlertOnce(true)
-      .setPriority(NotificationCompat.PRIORITY_LOW)
-      .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-      .addAction(android.R.drawable.ic_media_previous, "Prev", prevPendingIntent)
-      .addAction(toggleIcon, toggleTitle, togglePendingIntent)
-      .addAction(android.R.drawable.ic_media_next, "Next", nextPendingIntent)
+    mediaSession = MediaSession.Builder(this, player)
+      .setSessionActivity(sessionActivity)
+      .setCallback(callback)
       .build()
   }
 
-  private fun acquireWakeLock() {
-    try {
-      if (wakeLock == null) {
-        val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
-        wakeLock = powerManager?.newWakeLock(
-          PowerManager.PARTIAL_WAKE_LOCK,
-          "LifeTracker:MusicWakeLock"
-        )?.apply {
-          setReferenceCounted(false)
-          acquire(120 * 60 * 1000L) // 2 hour max safety timeout
-        }
-      }
-    } catch (_: Exception) {}
+  override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? {
+    return mediaSession
   }
 
-  private fun releaseWakeLock() {
-    try {
-      if (wakeLock?.isHeld == true) {
-        wakeLock?.release()
-      }
-      wakeLock = null
-    } catch (_: Exception) {}
-  }
+  override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+    val action = intent?.action
+    val manager = MusicPlayerManager.getInstance(applicationContext)
 
-  private fun createNotificationChannel() {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-      val channel = NotificationChannel(
-        channelId,
-        "Music Playback Controls",
-        NotificationManager.IMPORTANCE_LOW
-      ).apply {
-        description = "Provides background and lockscreen controls for Life Tracker Music"
-        setShowBadge(false)
-        lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+    when (action) {
+      ACTION_TOGGLE_PLAY -> manager.togglePlayPause()
+      ACTION_NEXT -> manager.next()
+      ACTION_PREV -> manager.previous()
+      ACTION_STOP -> {
+        manager.pause()
+        stopSelf()
+        return START_NOT_STICKY
       }
-      val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-      nm?.createNotificationChannel(channel)
     }
+
+    return super.onStartCommand(intent, flags, startId)
   }
 
   override fun onDestroy() {
-    releaseWakeLock()
+    mediaSession?.run {
+      // Do not release the shared player here so it survives transient service restarts,
+      // only release the mediaSession
+      release()
+      mediaSession = null
+    }
     super.onDestroy()
   }
 
@@ -189,7 +99,6 @@ class MusicPlaybackService : Service() {
     const val ACTION_NEXT = "com.example.music.ACTION_NEXT"
     const val ACTION_PREV = "com.example.music.ACTION_PREV"
     const val ACTION_STOP = "com.example.music.ACTION_STOP"
-    const val ACTION_UPDATE = "com.example.music.ACTION_UPDATE"
     const val EXTRA_OPEN_MUSIC = "extra_open_music"
   }
 }

@@ -56,7 +56,8 @@ object FocusBlockingOverlayManager {
     blockedPackage: String,
     customTitle: String? = null,
     customNotice: String? = null,
-    isShortContentLimit: Boolean = false
+    isShortContentLimit: Boolean = false,
+    isStrictLock: Boolean = false
   ) {
     mainHandler.post {
       // If OLED Black Screen is active, keep screen dark and do not clash overlays
@@ -108,6 +109,8 @@ object FocusBlockingOverlayManager {
       val density = context.resources.displayMetrics.density
       fun dp(value: Float): Int = (value * density + 0.5f).toInt()
 
+      val isStrictSession = isStrictLock || FocusModeManager.isStrictLockActive(context)
+
       // Root Frame (Obsidian Dark Background #121214)
       val root = FrameLayout(context).apply {
         setBackgroundColor(Color.parseColor("#F5121214")) // 96% opacity dark background
@@ -123,7 +126,8 @@ object FocusBlockingOverlayManager {
         val cardBg = GradientDrawable().apply {
           setColor(Color.parseColor("#1C1C22"))
           cornerRadius = dp(24f).toFloat()
-          setStroke(dp(1.2f), Color.parseColor("#B39855")) // GoldBrass accent border
+          val strokeColor = if (isStrictSession) Color.parseColor("#EF4444") else Color.parseColor("#B39855")
+          setStroke(dp(1.4f), strokeColor)
         }
         background = cardBg
         setPadding(dp(24f), dp(28f), dp(24f), dp(24f))
@@ -152,10 +156,15 @@ object FocusBlockingOverlayManager {
       }
       card.addView(iconView)
 
-      // Title: Focus Mode Active or Custom Limit Reached
+      // Title: Focus Mode Active or Strict Lock or Custom Limit Reached
       val titleView = TextView(context).apply {
-        text = customTitle ?: "🎯 Focus Mode सक्रिय"
-        setTextColor(Color.parseColor(if (isShortContentLimit) "#FF5252" else "#F2C94C")) // Red for limit, Gold for focus
+        text = customTitle ?: if (isStrictSession) "🚨 सख्त सुरक्षा लॉक" else "🎯 Focus Mode सक्रिय"
+        val titleColor = when {
+          isStrictSession -> "#EF4444"
+          isShortContentLimit -> "#FF5252"
+          else -> "#F2C94C"
+        }
+        setTextColor(Color.parseColor(titleColor))
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
         typeface = android.graphics.Typeface.DEFAULT_BOLD
         gravity = Gravity.CENTER
@@ -177,7 +186,11 @@ object FocusBlockingOverlayManager {
       }
 
       val noticeView = TextView(context).apply {
-        text = customNotice ?: "“$appLabel” वर्तमान सत्र में प्रतिबंधित है। अपने मुख्य लक्ष्य पर ध्यान केंद्रित रखें।"
+        text = customNotice ?: if (isStrictSession) {
+          "वयस्क / अनुपयुक्त सामग्री पहचान के कारण 15 मिनट का अनिवार्य डिजिटल लॉक सक्रिय है। “$appLabel” और अन्य अनधिकृत ऐप्स पूरी तरह ब्लॉक हैं।"
+        } else {
+          "“$appLabel” वर्तमान सत्र में प्रतिबंधित है। अपने मुख्य लक्ष्य पर ध्यान केंद्रित रखें।"
+        }
         setTextColor(Color.parseColor("#E0E0E0"))
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
         gravity = Gravity.CENTER
@@ -214,7 +227,7 @@ object FocusBlockingOverlayManager {
 
       val timerText = TextView(context).apply {
         text = "शेष समय: गणना हो रही है..."
-        setTextColor(Color.parseColor("#00E5FF")) // CyanNeon
+        setTextColor(Color.parseColor(if (isStrictSession) "#FF6B6B" else "#00E5FF"))
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
         typeface = android.graphics.Typeface.DEFAULT_BOLD
       }
@@ -229,7 +242,8 @@ object FocusBlockingOverlayManager {
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
         typeface = android.graphics.Typeface.DEFAULT_BOLD
         val btnBg = GradientDrawable().apply {
-          setColor(Color.parseColor("#D4AF37")) // GoldBrass
+          val bgColor = if (isStrictSession) "#EF4444" else "#D4AF37"
+          setColor(Color.parseColor(bgColor))
           cornerRadius = dp(14f).toFloat()
         }
         background = btnBg
@@ -253,27 +267,36 @@ object FocusBlockingOverlayManager {
       }
       card.addView(homeButton)
 
-      // Button 2: Open Life Tracker (Unlock / Recovery)
+      // Button 2: If Strict Lock, show locked message; else allow opening Life Tracker for Math challenge
       val appButton = Button(context).apply {
-        text = "Life Tracker खोलें (अनलॉक)"
-        setTextColor(Color.parseColor("#E0E0E0"))
+        if (isStrictSession) {
+          text = "🚫 सख्त लॉक: कोई अनलॉकिंग संभव नहीं"
+          setTextColor(Color.parseColor("#9E9E9E"))
+          isEnabled = false
+        } else {
+          text = "Life Tracker खोलें (अनलॉक)"
+          setTextColor(Color.parseColor("#E0E0E0"))
+          isEnabled = true
+        }
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
         val btnBg = GradientDrawable().apply {
           setColor(Color.TRANSPARENT)
           cornerRadius = dp(14f).toFloat()
-          setStroke(dp(1f), Color.parseColor("#444455"))
+          setStroke(dp(1f), Color.parseColor(if (isStrictSession) "#333340" else "#444455"))
         }
         background = btnBg
         layoutParams = LinearLayout.LayoutParams(
           LinearLayout.LayoutParams.MATCH_PARENT,
           dp(44f)
         )
-        setOnClickListener {
-          dismiss()
-          val openIntent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        if (!isStrictSession) {
+          setOnClickListener {
+            dismiss()
+            val openIntent = Intent(context, MainActivity::class.java).apply {
+              flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            context.startActivity(openIntent)
           }
-          context.startActivity(openIntent)
         }
       }
       card.addView(appButton)
@@ -284,11 +307,29 @@ object FocusBlockingOverlayManager {
         wm.addView(root, params)
         overlayView = root
         mainHandler.post(timerTicker)
-        Log.d(TAG, "Displayed focus blocking overlay for: $blockedPackage")
+        Log.d(TAG, "Displayed focus blocking overlay for: $blockedPackage (Strict: $isStrictSession)")
       } catch (e: Exception) {
         Log.e(TAG, "Failed to display focus blocking overlay", e)
       }
     }
+  }
+
+  fun showStrictLock(
+    context: Context,
+    blockedPackage: String,
+    matchedTerm: String? = null
+  ) {
+    val termNotice = if (!matchedTerm.isNullOrBlank()) " (“$matchedTerm”)" else ""
+    val title = "🚨 सख्त सुरक्षा लॉक"
+    val notice = "वयस्क / अनुपयुक्त सामग्री$termNotice पहचानी गई। 15 मिनट का अनिवार्य डिजिटल लॉक सक्रिय है। यह समय पूरा होने से पहले किसी भी स्थिति में बंद नहीं किया जा सकता।"
+    show(
+      context = context,
+      blockedPackage = blockedPackage,
+      customTitle = title,
+      customNotice = notice,
+      isShortContentLimit = false,
+      isStrictLock = true
+    )
   }
 
   private fun updateRemainingTime() {
@@ -297,7 +338,8 @@ object FocusBlockingOverlayManager {
     val remainingMillis = FocusModeManager.getRemainingSessionMillis(context)
 
     if (remainingMillis <= 0L) {
-      timerView.text = "सत्र समाप्त हो रहा है..."
+      timerView.text = "सत्र समाप्त हो रहा है... ताला खुल रहा है"
+      FocusModeManager.deactivateFocusMode(context, force = true)
       dismiss()
       return
     }

@@ -18,6 +18,12 @@ interface MusicDao {
   @Query("SELECT * FROM songs ORDER BY title ASC")
   fun getAllSongs(): Flow<List<SongEntity>>
 
+  @Query("SELECT * FROM songs ORDER BY title ASC")
+  suspend fun getAllSongsDirect(): List<SongEntity>
+
+  @Query("DELETE FROM songs WHERE id = :id")
+  suspend fun deleteSongById(id: String)
+
   @Query("SELECT * FROM songs WHERE isFavorite = 1 ORDER BY title ASC")
   fun getFavoriteSongs(): Flow<List<SongEntity>>
 

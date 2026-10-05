@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.SystemClock
 import android.telecom.TelecomManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -33,6 +34,18 @@ object FocusModeManager {
   private const val KEY_FOCUS_END_TIMESTAMP = "focus_end_timestamp"
   private const val KEY_ALLOWED_PACKAGES = "focus_allowed_packages"
 
+  // Strict Lock (Adult Content Detection & Anti-Tamper) Constants
+  private const val KEY_STRICT_LOCK_ACTIVE = "strict_lock_active"
+  private const val KEY_STRICT_LOCK_START_TIMESTAMP = "strict_lock_start_timestamp"
+  private const val KEY_STRICT_LOCK_END_TIMESTAMP = "strict_lock_end_timestamp"
+  private const val KEY_STRICT_LOCK_START_ELAPSED = "strict_lock_start_elapsed"
+  private const val KEY_STRICT_LOCK_ELAPSED_END = "strict_lock_elapsed_end"
+  private const val KEY_STRICT_LOCK_DURATION_MS = "strict_lock_duration_ms"
+  private const val KEY_STRICT_LOCK_LAST_SAVED_REMAINING_MS = "strict_lock_last_saved_remaining_ms"
+  private const val KEY_STRICT_LOCK_REASON = "strict_lock_reason"
+  private const val KEY_STRICT_LOCK_TRIGGER_WORD = "strict_lock_trigger_word"
+  private const val KEY_STRICT_LOCK_EVENT_ID = "strict_lock_event_id"
+
   const val ACTION_FOCUS_MODE_ACTIVATE = "com.example.alarm.ACTION_FOCUS_MODE_ACTIVATE"
   const val ACTION_FOCUS_MODE_DEACTIVATE = "com.example.alarm.ACTION_FOCUS_MODE_DEACTIVATE"
 
@@ -44,10 +57,171 @@ object FocusModeManager {
   private const val REQUEST_CODE_EXACT_END = 8015
 
   // =========================================================================
-  // STATE & DURATION PERSISTENCE
+  // STATE & DURATION PERSISTENCE (ANTI-TAMPERING TIMING ENGINE)
   // =========================================================================
 
+  /**
+   * Evaluates if Strict Lock is currently active.
+   * While active, no user can cancel, change timer, or unlock Focus Mode early.
+   */
+  fun isStrictLockActive(context: Context): Boolean {
+    val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    val active = prefs.getBoolean(KEY_STRICT_LOCK_ACTIVE, false)
+    if (!active) return false
+
+    return getStrictLockRemainingMillis(context) > 0L
+  }
+
+  fun getStrictLockEndTimestamp(context: Context): Long {
+    val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getLong(KEY_STRICT_LOCK_END_TIMESTAMP, 0L)
+  }
+
+  /**
+   * 🛡️ ANTI-TAMPERING REMAINING TIME ENGINE:
+   * Uses both System.currentTimeMillis() (Epoch) and SystemClock.elapsedRealtime().
+   * SystemClock.elapsedRealtime() is completely independent of the system clock and
+   * CANNOT be manipulated by the user changing Date/Time settings in Android.
+   */
+  fun getStrictLockRemainingMillis(context: Context): Long {
+    val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    val active = prefs.getBoolean(KEY_STRICT_LOCK_ACTIVE, false)
+    if (!active) return 0L
+
+    val epochEnd = prefs.getLong(KEY_STRICT_LOCK_END_TIMESTAMP, 0L)
+    val startElapsed = prefs.getLong(KEY_STRICT_LOCK_START_ELAPSED, 0L)
+    val elapsedEnd = prefs.getLong(KEY_STRICT_LOCK_ELAPSED_END, 0L)
+    val lastSavedRemaining = prefs.getLong(KEY_STRICT_LOCK_LAST_SAVED_REMAINING_MS, 0L)
+
+    val nowEpoch = System.currentTimeMillis()
+    val nowElapsed = SystemClock.elapsedRealtime()
+
+    // Detect if the device has rebooted since lock was initiated
+    val hasRebooted = nowElapsed < startElapsed
+
+    val remaining: Long = if (!hasRebooted && elapsedEnd > 0L) {
+      // 🛡️ ANTI-TAMPER CHECK:
+      // Phone was NOT rebooted. SystemClock.elapsedRealtime() cannot be manipulated by user!
+      // Even if clock was moved hours forward or backward, elapsedRealtime ensures exact 15 mins.
+      val elapsedRemaining = elapsedEnd - nowElapsed
+      maxOf(0L, elapsedRemaining)
+    } else {
+      // Device was rebooted: verify against stored epoch end
+      val epochRemaining = epochEnd - nowEpoch
+      if (epochRemaining > 0L) {
+        epochRemaining
+      } else if (lastSavedRemaining > 0L && epochEnd > 0L && nowEpoch < epochEnd + 60000L) {
+        0L
+      } else {
+        0L
+      }
+    }
+
+    if (remaining <= 0L) {
+      prefs.edit()
+        .putBoolean(KEY_STRICT_LOCK_ACTIVE, false)
+        .putLong(KEY_STRICT_LOCK_LAST_SAVED_REMAINING_MS, 0L)
+        .apply()
+      return 0L
+    } else {
+      prefs.edit().putLong(KEY_STRICT_LOCK_LAST_SAVED_REMAINING_MS, remaining).apply()
+      return remaining
+    }
+  }
+
+  fun getStrictLockReason(context: Context): String {
+    val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getString(KEY_STRICT_LOCK_REASON, "वयस्क / अनुपयुक्त सामग्री पहचान") ?: "वयस्क / अनुपयुक्त सामग्री पहचान"
+  }
+
+  /**
+   * Activates unbreakable Strict Lock for [durationMinutes] (default 15 minutes).
+   * Triggered automatically upon detecting adult content.
+   * Stores both Epoch End Time and SystemClock.elapsedRealtime End for tamper resistance.
+   */
+  fun activateStrictLock(
+    context: Context,
+    durationMinutes: Int = 15,
+    reason: String = "वयस्क सामग्री पहचानी गई",
+    triggerWord: String = "",
+    packageName: String = ""
+  ) {
+    createNotificationChannel(context)
+    val durationMs = durationMinutes * 60 * 1000L
+    val nowEpoch = System.currentTimeMillis()
+    val nowElapsed = SystemClock.elapsedRealtime()
+    val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    val currentStrictEnd = prefs.getLong(KEY_STRICT_LOCK_END_TIMESTAMP, 0L)
+    val newEpochEnd = nowEpoch + durationMs
+    val finalEpochEnd = if (currentStrictEnd > nowEpoch) maxOf(currentStrictEnd, newEpochEnd) else newEpochEnd
+
+    val currentElapsedEnd = prefs.getLong(KEY_STRICT_LOCK_ELAPSED_END, 0L)
+    val newElapsedEnd = nowElapsed + durationMs
+    val finalElapsedEnd = if (currentElapsedEnd > nowElapsed) maxOf(currentElapsedEnd, newElapsedEnd) else newElapsedEnd
+
+    prefs.edit()
+      .putBoolean(KEY_STRICT_LOCK_ACTIVE, true)
+      .putLong(KEY_STRICT_LOCK_START_TIMESTAMP, nowEpoch)
+      .putLong(KEY_STRICT_LOCK_END_TIMESTAMP, finalEpochEnd)
+      .putLong(KEY_STRICT_LOCK_START_ELAPSED, nowElapsed)
+      .putLong(KEY_STRICT_LOCK_ELAPSED_END, finalElapsedEnd)
+      .putLong(KEY_STRICT_LOCK_DURATION_MS, durationMs)
+      .putLong(KEY_STRICT_LOCK_LAST_SAVED_REMAINING_MS, durationMs)
+      .putString(KEY_STRICT_LOCK_REASON, reason)
+      .putString(KEY_STRICT_LOCK_TRIGGER_WORD, triggerWord)
+      .apply()
+
+    saveFocusState(context, active = true, endTimestamp = finalEpochEnd)
+    scheduleFocusExactEndAlarm(context, finalEpochEnd)
+    showStrictLockNotification(context, durationMinutes, reason)
+
+    // Launch persistent Foreground Service with ongoing live countdown notification
+    StrictLockService.start(context)
+
+    // Log to Room Database (StrictLockDao & UserSettingsDao)
+    CoroutineScope(Dispatchers.IO).launch {
+      try {
+        val db = LifeTrackerDatabase.getDatabase(context)
+        val event = com.example.data.model.StrictLockEventEntity(
+          timestamp = nowEpoch,
+          date = com.example.util.TimeUtils.getTodayDateString(),
+          time = java.text.SimpleDateFormat("hh:mm a", java.util.Locale.getDefault()).format(java.util.Date(nowEpoch)),
+          reason = reason,
+          triggerWord = triggerWord,
+          packageName = packageName,
+          durationMinutes = durationMinutes,
+          epochEndTimestamp = finalEpochEnd,
+          elapsedRealtimeEnd = finalElapsedEnd,
+          startElapsedRealtime = nowElapsed,
+          isCompleted = false
+        )
+        val eventId = db.strictLockDao().insertEvent(event)
+        prefs.edit().putLong(KEY_STRICT_LOCK_EVENT_ID, eventId).apply()
+
+        val settings = db.userSettingsDao().getSettingsSync()
+        if (settings != null) {
+          db.userSettingsDao().insertOrUpdate(
+            settings.copy(
+              isFocusModeActive = true,
+              focusSessionEndTimestamp = finalEpochEnd
+            )
+          )
+        }
+        Log.i(TAG, "Strict Lock active for $durationMinutes mins ($reason) | Anti-tamper elapsedEnd: $finalElapsedEnd")
+      } catch (e: Exception) {
+        Log.e(TAG, "Failed to persist strict lock to Room", e)
+      }
+    }
+  }
+
+  fun canDeactivateFocus(context: Context): Boolean {
+    return !isStrictLockActive(context)
+  }
+
   fun isFocusModeActive(context: Context): Boolean {
+    if (isStrictLockActive(context)) return true
+
     val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     val active = prefs.getBoolean(KEY_FOCUS_ACTIVE, false)
     if (!active) return false
@@ -55,7 +229,7 @@ object FocusModeManager {
     val endTimestamp = prefs.getLong(KEY_FOCUS_END_TIMESTAMP, 0L)
     if (endTimestamp > 0L && System.currentTimeMillis() >= endTimestamp) {
       // Auto-expired
-      deactivateFocusMode(context)
+      deactivateFocusMode(context, force = true)
       return false
     }
     return true
@@ -67,6 +241,9 @@ object FocusModeManager {
   }
 
   fun getRemainingSessionMillis(context: Context): Long {
+    if (isStrictLockActive(context)) {
+      return getStrictLockRemainingMillis(context)
+    }
     val endTimestamp = getFocusSessionEndTimestamp(context)
     val now = System.currentTimeMillis()
     return if (endTimestamp > now) endTimestamp - now else 0L
@@ -86,7 +263,7 @@ object FocusModeManager {
   }
 
   // =========================================================================
-  // ALLOWED APPS WHITELIST MANAGEMENT
+  // ALLOWED APPS WHITELIST MANAGEMENT (GUARDED DURING STRICT LOCK)
   // =========================================================================
 
   fun getAllowedPackages(context: Context): Set<String> {
@@ -94,18 +271,34 @@ object FocusModeManager {
     return prefs.getStringSet(KEY_ALLOWED_PACKAGES, emptySet()) ?: emptySet()
   }
 
+  /**
+   * Sets user allowed apps whitelist.
+   * Strictly blocked if Strict Lock is currently active!
+   */
   fun setAllowedPackages(context: Context, packages: Set<String>) {
+    if (isStrictLockActive(context)) {
+      Log.w(TAG, "Cannot modify allowed apps: Strict Lock is ACTIVE! Changes blocked.")
+      return
+    }
     val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     prefs.edit().putStringSet(KEY_ALLOWED_PACKAGES, packages).apply()
   }
 
   fun addAllowedPackage(context: Context, packageName: String) {
+    if (isStrictLockActive(context)) {
+      Log.w(TAG, "Cannot add allowed app: Strict Lock is ACTIVE!")
+      return
+    }
     val current = getAllowedPackages(context).toMutableSet()
     current.add(packageName)
     setAllowedPackages(context, current)
   }
 
   fun removeAllowedPackage(context: Context, packageName: String) {
+    if (isStrictLockActive(context)) {
+      Log.w(TAG, "Cannot remove allowed app: Strict Lock is ACTIVE!")
+      return
+    }
     val current = getAllowedPackages(context).toMutableSet()
     current.remove(packageName)
     setAllowedPackages(context, current)
@@ -185,6 +378,10 @@ object FocusModeManager {
    * Activates Focus Mode for a specific duration in minutes (e.g. 15m, 25m Pomodoro, 60m).
    */
   fun activateFocusDuration(context: Context, durationMinutes: Int) {
+    if (isStrictLockActive(context)) {
+      Log.w(TAG, "Cannot modify focus duration: Strict Lock is ACTIVE! Changes blocked.")
+      return
+    }
     createNotificationChannel(context)
     val now = System.currentTimeMillis()
     val endTimestamp = now + (durationMinutes * 60 * 1000L)
@@ -261,16 +458,36 @@ object FocusModeManager {
 
   /**
    * Deactivates Focus Mode, cancels alarms, removes blocking overlay, and notifies completion.
+   * If [force] is false and Strict Lock is currently active, deactivation is strictly rejected.
    */
-  fun deactivateFocusMode(context: Context) {
+  fun deactivateFocusMode(context: Context, force: Boolean = false) {
+    if (isStrictLockActive(context) && !force) {
+      val remaining = getStrictLockRemainingMillis(context) / 1000L
+      Log.w(TAG, "Cannot deactivate Focus Mode: Strict Lock is ACTIVE for another ${remaining}s. Deactivation blocked!")
+      return
+    }
+
+    val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    val eventId = prefs.getLong(KEY_STRICT_LOCK_EVENT_ID, -1L)
+    prefs.edit()
+      .putBoolean(KEY_STRICT_LOCK_ACTIVE, false)
+      .putLong(KEY_STRICT_LOCK_LAST_SAVED_REMAINING_MS, 0L)
+      .apply()
+
     saveFocusState(context, active = false, endTimestamp = 0L)
     cancelFocusAlarms(context)
     cancelFocusNotification(context)
     FocusBlockingOverlayManager.dismiss()
+    StrictLockService.stop(context)
 
     CoroutineScope(Dispatchers.IO).launch {
       try {
         val db = LifeTrackerDatabase.getDatabase(context)
+        if (eventId > 0L) {
+          db.strictLockDao().markCompleted(eventId)
+        } else {
+          db.strictLockDao().markAllCompleted()
+        }
         val settings = db.userSettingsDao().getSettingsSync()
         if (settings != null) {
           db.userSettingsDao().insertOrUpdate(
@@ -393,6 +610,36 @@ object FocusModeManager {
 
   fun onBootOrScheduleChange(context: Context) {
     val now = System.currentTimeMillis()
+
+    // 1. Strict Lock survives reboot unconditionally!
+    val isStrict = isStrictLockActive(context)
+    if (isStrict) {
+      val remaining = getStrictLockRemainingMillis(context)
+      if (remaining > 0L) {
+        val newNowElapsed = SystemClock.elapsedRealtime()
+        val newElapsedEnd = newNowElapsed + remaining
+        val newEpochEnd = System.currentTimeMillis() + remaining
+
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit()
+          .putLong(KEY_STRICT_LOCK_START_ELAPSED, newNowElapsed)
+          .putLong(KEY_STRICT_LOCK_ELAPSED_END, newElapsedEnd)
+          .putLong(KEY_STRICT_LOCK_END_TIMESTAMP, newEpochEnd)
+          .apply()
+
+        saveFocusState(context, active = true, endTimestamp = newEpochEnd)
+        scheduleFocusExactEndAlarm(context, newEpochEnd)
+
+        // Restart persistent Foreground Service after reboot
+        StrictLockService.start(context)
+
+        Log.i(TAG, "Restored active Strict Lock session after reboot: ${remaining / 1000L}s remaining")
+        return
+      } else {
+        deactivateFocusMode(context, force = true)
+      }
+    }
+
     val isFocusActive = isFocusModeActive(context)
     val endTimestamp = getFocusSessionEndTimestamp(context)
 
@@ -405,7 +652,7 @@ object FocusModeManager {
         Log.d(TAG, "Restored active focus duration session after reboot: $remainingMins mins remaining")
       } else {
         // Expired while device was off
-        deactivateFocusMode(context)
+        deactivateFocusMode(context, force = true)
         Log.d(TAG, "Focus duration session expired during reboot/off; auto-deactivated")
       }
     } else {
@@ -459,6 +706,34 @@ object FocusModeManager {
       }
       notificationManager.createNotificationChannel(channel)
     }
+  }
+
+  fun showStrictLockNotification(context: Context, remainingMinutes: Int = 15, reason: String = "") {
+    createNotificationChannel(context)
+    val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+      ?: return
+
+    val openAppIntent = Intent(context, MainActivity::class.java).apply {
+      flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+    }
+    val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    } else {
+      PendingIntent.FLAG_UPDATE_CURRENT
+    }
+    val pendingIntent = PendingIntent.getActivity(context, 8021, openAppIntent, flags)
+
+    val builder = NotificationCompat.Builder(context, FOCUS_NOTIFICATION_CHANNEL_ID)
+      .setSmallIcon(R.mipmap.ic_launcher)
+      .setContentTitle("🚨 सख्त लॉक सक्रिय • $remainingMinutes मिनट शेष")
+      .setContentText("वयस्क सामग्री पहचानी गई। 15 मिनट तक कोई अनलॉकिंग संभव नहीं है।")
+      .setOngoing(true)
+      .setPriority(NotificationCompat.PRIORITY_MAX)
+      .setCategory(NotificationCompat.CATEGORY_ALARM)
+      .setContentIntent(pendingIntent)
+      .setAutoCancel(false)
+
+    notificationManager.notify(FOCUS_NOTIFICATION_ID, builder.build())
   }
 
   fun showFocusNotification(context: Context, remainingMinutes: Int = -1, isScheduled: Boolean = false) {

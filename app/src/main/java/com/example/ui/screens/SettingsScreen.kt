@@ -46,22 +46,33 @@ import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FlashOn
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Healing
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Spa
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Vibration
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material.icons.filled.Widgets
+import com.example.ui.components.ResetAppConfirmDialog
+import com.example.ui.components.ResetAppWarningDialog
+import com.example.ui.components.RestoreBackupsDialog
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -724,11 +735,15 @@ private fun MeditationSettingsCategory(viewModel: LifeTrackerViewModel) {
 // -------------------------------------------------------------
 @Composable
 private fun FocusDisciplineCategory(viewModel: LifeTrackerViewModel) {
+  val context = LocalContext.current
   val isFocusModeActive by viewModel.isFocusModeActive.collectAsState()
   val isFocusScheduleEnabled by viewModel.isFocusScheduleEnabled.collectAsState()
   val focusStartTimeMinutes by viewModel.focusStartTimeMinutes.collectAsState()
   val focusEndTimeMinutes by viewModel.focusEndTimeMinutes.collectAsState()
   val enableRecoveryMode by viewModel.enableRecoveryMode.collectAsState()
+  val strictLockEvents by viewModel.strictLockEvents.collectAsState()
+
+  val isStrictLock = com.example.focus.FocusModeManager.isStrictLockActive(context)
 
   var showStartTimePicker by remember { mutableStateOf(false) }
   var showEndTimePicker by remember { mutableStateOf(false) }
@@ -741,7 +756,13 @@ private fun FocusDisciplineCategory(viewModel: LifeTrackerViewModel) {
         .fillMaxWidth()
         .clip(RoundedCornerShape(18.dp))
         .background(DarkSurfaceElevated)
-        .border(1.dp, if (isFocusModeActive) GoldBrass.copy(alpha = 0.6f) else DarkSurfaceBorder, RoundedCornerShape(18.dp))
+        .border(
+          1.dp,
+          if (isStrictLock) Color(0xFFEF4444).copy(alpha = 0.8f)
+          else if (isFocusModeActive) GoldBrass.copy(alpha = 0.6f)
+          else DarkSurfaceBorder,
+          RoundedCornerShape(18.dp)
+        )
         .padding(16.dp)
     ) {
       Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -755,12 +776,12 @@ private fun FocusDisciplineCategory(viewModel: LifeTrackerViewModel) {
               modifier = Modifier
                 .size(8.dp)
                 .clip(CircleShape)
-                .background(if (isFocusModeActive) GoldBrass else WarmMuted)
+                .background(if (isStrictLock) Color(0xFFEF4444) else if (isFocusModeActive) GoldBrass else WarmMuted)
             )
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-              text = if (isFocusModeActive) "FOCUS MODE ACTIVE • सक्रिय" else "FOCUS MODE INACTIVE • निष्क्रिय",
-              color = if (isFocusModeActive) GoldBrass else WarmMuted,
+              text = if (isStrictLock) "STRICT LOCK ACTIVE • सख्त लॉक सक्रिय" else if (isFocusModeActive) "FOCUS MODE ACTIVE • सक्रिय" else "FOCUS MODE INACTIVE • निष्क्रिय",
+              color = if (isStrictLock) Color(0xFFFF6B6B) else if (isFocusModeActive) GoldBrass else WarmMuted,
               fontSize = 11.sp,
               fontWeight = FontWeight.Bold,
               letterSpacing = 0.8.sp
@@ -771,12 +792,12 @@ private fun FocusDisciplineCategory(viewModel: LifeTrackerViewModel) {
             Box(
               modifier = Modifier
                 .clip(RoundedCornerShape(8.dp))
-                .background(GoldBrass.copy(alpha = 0.15f))
+                .background(if (isStrictLock) Color(0xFFEF4444).copy(alpha = 0.2f) else GoldBrass.copy(alpha = 0.15f))
                 .padding(horizontal = 8.dp, vertical = 4.dp)
             ) {
               Text(
-                text = if (isFocusScheduleEnabled) "Scheduled" else "Manual",
-                color = GoldHighlight,
+                text = if (isStrictLock) "Strict 15m" else if (isFocusScheduleEnabled) "Scheduled" else "Manual",
+                color = if (isStrictLock) Color(0xFFFF6B6B) else GoldHighlight,
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Bold
               )
@@ -792,14 +813,21 @@ private fun FocusDisciplineCategory(viewModel: LifeTrackerViewModel) {
           Column(modifier = Modifier.weight(1f)) {
             Text("Manual Focus Mode", color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
             Text(
-              text = if (isFocusModeActive) "सक्रिय सत्र को बंद करने के लिए 3 गणितीय प्रश्नों का सही उत्तर आवश्यक है।" else "तत्काल डिजिटल अनुशासन सत्र चालू करें।",
-              color = TextMuted,
+              text = if (isStrictLock) {
+                "🚫 सख्त लॉक सक्रिय है: वयस्क सामग्री पहचान के कारण 15 मिनट का लॉक बीच में बंद नहीं हो सकता।"
+              } else if (isFocusModeActive) {
+                "सक्रिय सत्र को बंद करने के लिए 3 गणितीय प्रश्नों का सही उत्तर आवश्यक है।"
+              } else {
+                "तत्काल डिजिटल अनुशासन सत्र चालू करें।"
+              },
+              color = if (isStrictLock) Color(0xFFFFB4AB) else TextMuted,
               fontSize = 12.sp,
               lineHeight = 16.sp
             )
           }
           Switch(
             checked = isFocusModeActive,
+            enabled = !isStrictLock,
             onCheckedChange = { shouldEnable ->
               if (shouldEnable) {
                 viewModel.setFocusModeActive(true)
@@ -809,6 +837,103 @@ private fun FocusDisciplineCategory(viewModel: LifeTrackerViewModel) {
               }
             }
           )
+        }
+      }
+    }
+
+    // 1B. STRICT LOCK: ADULT CONTENT PROTECTION CARD
+    Box(
+      modifier = Modifier
+        .fillMaxWidth()
+        .clip(RoundedCornerShape(18.dp))
+        .background(DarkSurfaceElevated)
+        .border(1.dp, Color(0xFFEF4444).copy(alpha = 0.4f), RoundedCornerShape(18.dp))
+        .padding(16.dp)
+    ) {
+      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          Box(
+            modifier = Modifier
+              .size(36.dp)
+              .clip(CircleShape)
+              .background(Color(0xFF3B1515)),
+            contentAlignment = Alignment.Center
+          ) {
+            Icon(Icons.Default.Shield, contentDescription = null, tint = Color(0xFFEF4444), modifier = Modifier.size(20.dp))
+          }
+          Spacer(modifier = Modifier.width(10.dp))
+          Column {
+            Text(
+              text = "सख्त सुरक्षा लॉक (Strict Lock)",
+              color = TextPrimary,
+              fontSize = 15.sp,
+              fontWeight = FontWeight.Bold
+            )
+            Text(
+              text = "100% ऑफ़लाइन व ऑन-डिवाइस सक्रिय",
+              color = Color(0xFF10B981),
+              fontSize = 11.sp,
+              fontWeight = FontWeight.Medium
+            )
+          }
+        }
+
+        Text(
+          text = "ब्राउज़र या किसी ऐप में ख़राब (adult / explicit) कंटेंट पहचानते ही Focus Mode अपने आप 15 मिनट के लिए सक्रिय हो जाता है और बीच में बंद नहीं किया जा सकता। कोई डेटा फ़ोन से बाहर नहीं जाता।",
+          color = TextMuted,
+          fontSize = 12.sp,
+          lineHeight = 16.sp
+        )
+
+        Row(
+          modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(DarkSurface)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Text(
+            text = "कुल अवरोधित घटनाएं (Total Interceptions)",
+            color = WarmOffWhite,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium
+          )
+          Text(
+            text = "${strictLockEvents.size}",
+            color = Color(0xFFEF4444),
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold
+          )
+        }
+
+        if (strictLockEvents.isNotEmpty()) {
+          Text(
+            text = "हालिया अवरोधित गतिविधियां:",
+            color = WarmMuted,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold
+          )
+          strictLockEvents.take(3).forEach { ev ->
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+              Text(
+                text = "${ev.date} ${ev.time} • ${ev.reason}",
+                color = WarmParchment,
+                fontSize = 10.sp,
+                maxLines = 1
+              )
+              Text(
+                text = "${ev.durationMinutes}m",
+                color = Color(0xFFFF6B6B),
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold
+              )
+            }
+          }
         }
       }
     }
@@ -838,6 +963,7 @@ private fun FocusDisciplineCategory(viewModel: LifeTrackerViewModel) {
           }
           Switch(
             checked = isFocusScheduleEnabled,
+            enabled = !isStrictLock,
             onCheckedChange = { enabled ->
               viewModel.updateFocusSchedule(enabled, focusStartTimeMinutes, focusEndTimeMinutes)
             }
@@ -854,7 +980,7 @@ private fun FocusDisciplineCategory(viewModel: LifeTrackerViewModel) {
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(12.dp))
                 .background(ObsidianCard)
-                .clickable { showStartTimePicker = true }
+                .clickable(enabled = !isStrictLock) { showStartTimePicker = true }
                 .padding(horizontal = 14.dp, vertical = 10.dp),
               horizontalArrangement = Arrangement.SpaceBetween,
               verticalAlignment = Alignment.CenterVertically
@@ -869,7 +995,12 @@ private fun FocusDisciplineCategory(viewModel: LifeTrackerViewModel) {
                   fontWeight = FontWeight.Bold
                 )
               }
-              Text("बदलें →", color = GoldBrass, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+              Text(
+                text = if (isStrictLock) "🔒 लॉक" else "बदलें →",
+                color = if (isStrictLock) WarmMuted else GoldBrass,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold
+              )
             }
 
             // End Time Row
@@ -878,7 +1009,7 @@ private fun FocusDisciplineCategory(viewModel: LifeTrackerViewModel) {
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(12.dp))
                 .background(ObsidianCard)
-                .clickable { showEndTimePicker = true }
+                .clickable(enabled = !isStrictLock) { showEndTimePicker = true }
                 .padding(horizontal = 14.dp, vertical = 10.dp),
               horizontalArrangement = Arrangement.SpaceBetween,
               verticalAlignment = Alignment.CenterVertically
@@ -893,7 +1024,12 @@ private fun FocusDisciplineCategory(viewModel: LifeTrackerViewModel) {
                   fontWeight = FontWeight.Bold
                 )
               }
-              Text("बदलें →", color = GoldBrass, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+              Text(
+                text = if (isStrictLock) "🔒 लॉक" else "बदलें →",
+                color = if (isStrictLock) WarmMuted else GoldBrass,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold
+              )
             }
 
             // Overnight helper note
@@ -1464,48 +1600,604 @@ private fun ReportsTrackingCategory(viewModel: LifeTrackerViewModel) {
 // -------------------------------------------------------------
 @Composable
 private fun DataBackupCategory(viewModel: LifeTrackerViewModel) {
+  val context = LocalContext.current
+  val coroutineScope = rememberCoroutineScope()
+  var refreshTrigger by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+
+  val folderUri = remember(refreshTrigger) { com.example.backup.BackupPreferences.getTreeUri(context) }
+  val isFolderAccessible = remember(refreshTrigger) { com.example.backup.BackupPreferences.isFolderAccessible(context) }
+  val folderName = remember(refreshTrigger) { com.example.backup.BackupPreferences.getFolderDisplayName(context) }
+  var isAutoBackup by remember(refreshTrigger) { mutableStateOf(com.example.backup.BackupPreferences.isAutoBackupEnabled(context)) }
+  val backupTime = remember(refreshTrigger) { com.example.backup.BackupPreferences.getBackupTime(context) }
+  val lastBackupTimestamp = remember(refreshTrigger) { com.example.backup.BackupPreferences.getLastBackupTimestamp(context) }
+  val lastBackupSize = remember(refreshTrigger) { com.example.backup.BackupPreferences.getLastBackupSize(context) }
+  val lastBackupFileName = remember(refreshTrigger) { com.example.backup.BackupPreferences.getLastBackupFileName(context) }
+  val lastBackupError = remember(refreshTrigger) { com.example.backup.BackupPreferences.getLastBackupError(context) }
+
+  var isBackingUpNow by remember { mutableStateOf(false) }
+  var showRestoreDialog by remember { mutableStateOf(false) }
+  var showTimePicker by remember { mutableStateOf(false) }
   var showExportDialog by remember { mutableStateOf(false) }
+  var exportDialogInitialTab by remember { mutableStateOf(ExportFormatTab.JSON) }
 
-  Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-    Box(
-      modifier = Modifier
-        .fillMaxWidth()
-        .clip(RoundedCornerShape(18.dp))
-        .background(DarkSurfaceElevated)
-        .border(1.dp, DarkSurfaceBorder, RoundedCornerShape(18.dp))
-        .padding(16.dp)
-    ) {
-      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("Export / Backup & Restore", color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-        Text("Backup your entire routine, tasks, journal, and meditation records to JSON or copy as plain text.", color = TextMuted, fontSize = 12.sp)
+  // Reset App Safety Dialogs State
+  var showResetWarningDialog by remember { mutableStateOf(false) }
+  var showResetConfirmDialog by remember { mutableStateOf(false) }
+  var isResettingApp by remember { mutableStateOf(false) }
 
-        Button(
-          onClick = { showExportDialog = true },
-          colors = ButtonDefaults.buttonColors(containerColor = CyanNeon.copy(alpha = 0.2f)),
-          shape = RoundedCornerShape(10.dp)
-        ) {
-          Text("Open Backup & Restore Center", color = CyanNeon, fontWeight = FontWeight.Bold)
-        }
-      }
-    }
-
-    Box(
-      modifier = Modifier
-        .fillMaxWidth()
-        .clip(RoundedCornerShape(18.dp))
-        .background(DarkSurfaceElevated)
-        .border(1.dp, DarkSurfaceBorder, RoundedCornerShape(18.dp))
-        .padding(16.dp)
-    ) {
-      Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("100% Local Privacy", color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-        Text("Your routine data is stored completely inside your Android device using SQLite Room database without third-party tracking.", color = TextMuted, fontSize = 12.sp)
+  // Folder Picker Launcher (OpenDocumentTree with persistable permission)
+  val folderLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.OpenDocumentTree()
+  ) { uri ->
+    if (uri != null) {
+      try {
+        val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        context.contentResolver.takePersistableUriPermission(uri, flags)
+        val doc = androidx.documentfile.provider.DocumentFile.fromTreeUri(context, uri)
+        val name = doc?.name ?: uri.lastPathSegment ?: "LifeTracker Backup"
+        com.example.backup.BackupPreferences.setTreeUri(context, uri, name)
+        com.example.backup.DailyBackupWorker.schedulePeriodic(context)
+        Toast.makeText(context, "बैकअप फ़ोल्डर सफलतापूर्वक चुना गया!", Toast.LENGTH_SHORT).show()
+        refreshTrigger++
+      } catch (e: Exception) {
+        Toast.makeText(context, "फ़ोल्डर अनुमति में त्रुटि: ${e.message}", Toast.LENGTH_SHORT).show()
       }
     }
   }
 
+  Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+
+    // =========================================================
+    // SECTION 1: BACKUP DATA (डेटा बैकअप)
+    // =========================================================
+    Text(
+      text = "1. बैकअप डेटा (Backup Data)",
+      color = CyanNeon,
+      fontSize = 14.sp,
+      fontWeight = FontWeight.Bold
+    )
+
+    // Folder Selection Card (Survival after Uninstall)
+    Box(
+      modifier = Modifier
+        .fillMaxWidth()
+        .clip(RoundedCornerShape(18.dp))
+        .background(if (isFolderAccessible) DarkSurfaceElevated else DustyRose.copy(alpha = 0.12f))
+        .border(
+          width = 1.dp,
+          color = if (isFolderAccessible) SageGreen.copy(alpha = 0.5f) else DustyRose.copy(alpha = 0.6f),
+          shape = RoundedCornerShape(18.dp)
+        )
+        .padding(16.dp)
+        .testTag("backup_folder_card")
+    ) {
+      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+              imageVector = if (isFolderAccessible) Icons.Default.FolderOpen else Icons.Default.WarningAmber,
+              contentDescription = null,
+              tint = if (isFolderAccessible) SageGreen else DustyRose,
+              modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+              text = if (isFolderAccessible) "सुरक्षित बैकअप फ़ोल्डर" else "⚠️ बैकअप फ़ोल्डर आवश्यक है",
+              color = if (isFolderAccessible) WarmOffWhite else DustyRose,
+              fontSize = 15.sp,
+              fontWeight = FontWeight.Bold
+            )
+          }
+
+          if (isFolderAccessible) {
+            Text(
+              text = "सक्रिय",
+              color = SageGreen,
+              fontSize = 12.sp,
+              fontWeight = FontWeight.SemiBold
+            )
+          }
+        }
+
+        if (isFolderAccessible) {
+          Text(
+            text = "📂 चयनित फ़ोल्डर: ${folderName ?: "Documents"}",
+            color = WarmOffWhite,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium
+          )
+          Text(
+            text = "यह फ़ोल्डर ऐप अनइंस्टॉल करने के बाद भी सुरक्षित रहेगा। भविष्य में ऐप दोबारा इंस्टॉल करने पर इस फ़ोल्डर से पूरा डेटा वापस लाया जा सकेगा।",
+            color = TextMuted,
+            fontSize = 11.sp,
+            lineHeight = 16.sp
+          )
+        } else {
+          Text(
+            text = "चेतावनी: बैकअप तब तक सुरक्षित नहीं है जब तक आप एक बाहरी फ़ोल्डर नहीं चुनते! ऐप अनइंस्टॉल होने पर आंतरिक स्टोरेज मिट जाता है। कृपया Documents में 'LifeTracker Backup' फ़ोल्डर बनाएं।",
+            color = DustyRose,
+            fontSize = 12.sp,
+            lineHeight = 17.sp
+          )
+        }
+
+        Button(
+          onClick = { folderLauncher.launch(null) },
+          colors = ButtonDefaults.buttonColors(
+            containerColor = if (isFolderAccessible) ObsidianCard else DustyRose,
+            contentColor = if (isFolderAccessible) GoldBrass else DarkBackground
+          ),
+          border = if (isFolderAccessible) androidx.compose.foundation.BorderStroke(1.dp, GoldBrass.copy(alpha = 0.5f)) else null,
+          shape = RoundedCornerShape(10.dp),
+          modifier = Modifier.fillMaxWidth().testTag("choose_backup_folder_btn")
+        ) {
+          Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(16.dp))
+          Spacer(modifier = Modifier.width(8.dp))
+          Text(
+            text = if (isFolderAccessible) "फ़ोल्डर बदलें (Change Folder)" else "फ़ोल्डर चुनें (Choose Folder)",
+            fontWeight = FontWeight.Bold
+          )
+        }
+      }
+    }
+
+    // Automatic Schedule Card
+    Box(
+      modifier = Modifier
+        .fillMaxWidth()
+        .clip(RoundedCornerShape(18.dp))
+        .background(DarkSurfaceElevated)
+        .border(1.dp, DarkSurfaceBorder, RoundedCornerShape(18.dp))
+        .padding(16.dp)
+        .testTag("auto_backup_schedule_card")
+    ) {
+      Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Column(modifier = Modifier.weight(1f)) {
+            Text(
+              text = "स्वचालित दैनिक बैकअप",
+              color = TextPrimary,
+              fontSize = 15.sp,
+              fontWeight = FontWeight.Bold
+            )
+            Text(
+              text = "प्रतिदिन बैकअप लेकर सुरक्षित ज़िप फ़ाइल बनाता है",
+              color = TextMuted,
+              fontSize = 11.sp
+            )
+          }
+
+          Switch(
+            checked = isAutoBackup,
+            onCheckedChange = { enabled ->
+              isAutoBackup = enabled
+              com.example.backup.BackupPreferences.setAutoBackupEnabled(context, enabled)
+              if (enabled) {
+                com.example.backup.DailyBackupWorker.schedulePeriodic(context)
+              } else {
+                com.example.backup.DailyBackupWorker.cancel(context)
+              }
+              refreshTrigger++
+            },
+            colors = SwitchDefaults.colors(
+              checkedThumbColor = DarkBackground,
+              checkedTrackColor = CyanNeon,
+              uncheckedThumbColor = TextMuted,
+              uncheckedTrackColor = DarkSurface
+            ),
+            modifier = Modifier.testTag("auto_backup_switch")
+          )
+        }
+
+        if (isAutoBackup) {
+          val (hour, min) = backupTime
+          val timeStr = TimeUtils.minutesTo12Hour(hour * 60 + min)
+          Box(
+            modifier = Modifier
+              .fillMaxWidth()
+              .clip(RoundedCornerShape(12.dp))
+              .background(DarkSurface)
+              .clickable { showTimePicker = true }
+              .padding(12.dp)
+          ) {
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.SpaceBetween,
+              verticalAlignment = Alignment.CenterVertically
+            ) {
+              Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.AccessTime, contentDescription = null, tint = CyanNeon, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Column {
+                  Text("बैकअप समय", color = TextSecondary, fontSize = 11.sp)
+                  Text(timeStr, color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                }
+              }
+
+              Text("बदलें →", color = CyanNeon, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+            }
+          }
+        }
+      }
+    }
+
+    // Backup Status & Details Card
+    Box(
+      modifier = Modifier
+        .fillMaxWidth()
+        .clip(RoundedCornerShape(18.dp))
+        .background(DarkSurfaceElevated)
+        .border(1.dp, DarkSurfaceBorder, RoundedCornerShape(18.dp))
+        .padding(16.dp)
+        .testTag("backup_status_details_card")
+    ) {
+      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Text("बैकअप स्थिति एवं विवरण", color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+
+          val status = com.example.backup.BackupPreferences.getLastBackupStatus(context)
+          val (badgeText, badgeColor) = when (status) {
+            com.example.backup.BackupPreferences.STATUS_OK -> "सक्रिय (OK)" to SageGreen
+            com.example.backup.BackupPreferences.STATUS_ERROR -> "त्रुटि (Error)" to DustyRose
+            com.example.backup.BackupPreferences.STATUS_NO_FOLDER -> "फ़ोल्डर नहीं है" to DustyRose
+            else -> "कोई बैकअप नहीं" to WarmMuted
+          }
+
+          Text(
+            text = badgeText,
+            color = badgeColor,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold
+          )
+        }
+
+        if (lastBackupTimestamp > 0L) {
+          val sdf = java.text.SimpleDateFormat("d MMM yyyy, h:mm a", java.util.Locale.US)
+          val formattedDate = sdf.format(java.util.Date(lastBackupTimestamp))
+          val sizeKb = (lastBackupSize / 1024.0)
+          val sizeStr = if (sizeKb >= 1024) String.format(java.util.Locale.US, "%.1f MB", sizeKb / 1024.0)
+          else String.format(java.util.Locale.US, "%.1f KB", sizeKb)
+
+          Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("• पिछला सफल बैकअप: $formattedDate", color = WarmOffWhite, fontSize = 12.sp)
+            Text("• बैकअप साइज़: $sizeStr", color = TextMuted, fontSize = 12.sp)
+            if (!lastBackupFileName.isNullOrBlank()) {
+              Text("• फ़ाइल: $lastBackupFileName", color = TextMuted, fontSize = 11.sp)
+            }
+          }
+        } else {
+          Text("• अभी तक कोई बैकअप नहीं लिया गया है।", color = TextMuted, fontSize = 12.sp)
+        }
+
+        if (isAutoBackup && isFolderAccessible) {
+          val (h, m) = backupTime
+          Text("• अगला निर्धारित बैकअप: प्रतिदिन ${TimeUtils.minutesTo12Hour(h * 60 + m)}", color = SageGreen, fontSize = 12.sp)
+        }
+
+        if (!lastBackupError.isNullOrBlank()) {
+          Box(
+            modifier = Modifier
+              .fillMaxWidth()
+              .clip(RoundedCornerShape(8.dp))
+              .background(DustyRose.copy(alpha = 0.15f))
+              .border(1.dp, DustyRose.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+              .padding(8.dp)
+          ) {
+            Text("अंतिम त्रुटि: $lastBackupError", color = DustyRose, fontSize = 11.sp)
+          }
+        }
+
+        Button(
+          onClick = {
+            if (!isBackingUpNow) {
+              isBackingUpNow = true
+              coroutineScope.launch {
+                val res = com.example.backup.BackupManager.performBackup(context)
+                isBackingUpNow = false
+                refreshTrigger++
+                if (res.isSuccess) {
+                  Toast.makeText(context, "✅ बैकअप सफलतापूर्वक पूर्ण हुआ!", Toast.LENGTH_SHORT).show()
+                } else {
+                  val err = res.exceptionOrNull()?.localizedMessage ?: "बैकअप विफल"
+                  Toast.makeText(context, "❌ $err", Toast.LENGTH_LONG).show()
+                }
+              }
+            }
+          },
+          enabled = !isBackingUpNow,
+          colors = ButtonDefaults.buttonColors(containerColor = CyanNeon, contentColor = DarkBackground),
+          shape = RoundedCornerShape(12.dp),
+          modifier = Modifier.fillMaxWidth().testTag("backup_now_btn")
+        ) {
+          if (isBackingUpNow) {
+            CircularProgressIndicator(color = DarkBackground, modifier = Modifier.size(16.dp))
+            Spacer(modifier = Modifier.width(6.dp))
+            Text("बैकअप चालू...", fontSize = 13.sp)
+          } else {
+            Icon(Icons.Default.Backup, contentDescription = null, modifier = Modifier.size(16.dp))
+            Spacer(modifier = Modifier.width(6.dp))
+            Text("अभी बैकअप लें (Backup Now)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+          }
+        }
+      }
+    }
+
+    // =========================================================
+    // SECTION 2: RESTORE BACKUP (पुराना बैकअप वापस लाएँ)
+    // =========================================================
+    Text(
+      text = "2. बैकअप से पुनर्स्थापित करें (Restore Backup)",
+      color = GoldBrass,
+      fontSize = 14.sp,
+      fontWeight = FontWeight.Bold
+    )
+
+    Box(
+      modifier = Modifier
+        .fillMaxWidth()
+        .clip(RoundedCornerShape(18.dp))
+        .background(DarkSurfaceElevated)
+        .border(1.dp, GoldBrass.copy(alpha = 0.4f), RoundedCornerShape(18.dp))
+        .padding(16.dp)
+        .testTag("restore_backup_section_card")
+    ) {
+      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          Icon(Icons.Default.History, contentDescription = null, tint = GoldBrass, modifier = Modifier.size(20.dp))
+          Spacer(modifier = Modifier.width(8.dp))
+          Text(
+            text = "Existing User / Restore Backup",
+            color = WarmOffWhite,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold
+          )
+        }
+
+        Text(
+          text = "यदि आपके पास पूर्व बैकअप है (सुरक्षित फ़ोल्डर या .zip फ़ाइल में), तो आप उसे यहाँ से पुनर्स्थापित कर सकते हैं। पुनर्स्थापना से पहले फ़ाइल की वैधता एवं स्कीमा जाँची जाती है।",
+          color = TextMuted,
+          fontSize = 12.sp,
+          lineHeight = 17.sp
+        )
+
+        OutlinedButton(
+          onClick = { showRestoreDialog = true },
+          shape = RoundedCornerShape(12.dp),
+          border = androidx.compose.foundation.BorderStroke(1.dp, GoldBrass.copy(alpha = 0.7f)),
+          modifier = Modifier.fillMaxWidth().testTag("restore_from_backup_btn")
+        ) {
+          Icon(Icons.Default.History, contentDescription = null, tint = GoldBrass, modifier = Modifier.size(18.dp))
+          Spacer(modifier = Modifier.width(8.dp))
+          Text("फ़ोल्डर या ZIP फ़ाइल से रिस्टोर करें", color = GoldBrass, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+        }
+      }
+    }
+
+    // =========================================================
+    // SECTION 3: NEW USER / RESET APP (नया यूज़र / ऐप रीसेट करें)
+    // =========================================================
+    Text(
+      text = "3. नया यूज़र / ऐप रीसेट करें (New User / Reset App)",
+      color = DustyRose,
+      fontSize = 14.sp,
+      fontWeight = FontWeight.Bold
+    )
+
+    Box(
+      modifier = Modifier
+        .fillMaxWidth()
+        .clip(RoundedCornerShape(18.dp))
+        .background(DarkSurfaceElevated)
+        .border(1.dp, DustyRose.copy(alpha = 0.45f), RoundedCornerShape(18.dp))
+        .padding(16.dp)
+        .testTag("reset_app_section_card")
+    ) {
+      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          Icon(Icons.Default.WarningAmber, contentDescription = null, tint = DustyRose, modifier = Modifier.size(20.dp))
+          Spacer(modifier = Modifier.width(8.dp))
+          Text(
+            text = "New User / Reset App",
+            color = WarmOffWhite,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold
+          )
+        }
+
+        Text(
+          text = "ऐप को एक नए उपयोगकर्ता की तरह शुरुआत करने के लिए रीसेट करें। आपके सभी रूटीन, दैनिक कार्य, व्यक्तिगत नोट्स और सेटिंग्स हट जाएंगे और ऐप पूरी तरह नए सिरे से खाली रूटीन के साथ शुरू होगा।",
+          color = TextMuted,
+          fontSize = 12.sp,
+          lineHeight = 17.sp
+        )
+
+        Button(
+          onClick = { showResetWarningDialog = true },
+          colors = ButtonDefaults.buttonColors(
+            containerColor = DustyRose.copy(alpha = 0.15f),
+            contentColor = DustyRose
+          ),
+          border = androidx.compose.foundation.BorderStroke(1.dp, DustyRose.copy(alpha = 0.6f)),
+          shape = RoundedCornerShape(12.dp),
+          modifier = Modifier.fillMaxWidth().testTag("open_reset_warning_btn")
+        ) {
+          Icon(Icons.Default.RestartAlt, contentDescription = null, tint = DustyRose, modifier = Modifier.size(18.dp))
+          Spacer(modifier = Modifier.width(8.dp))
+          Text("नया यूज़र / ऐप रीसेट करें (Reset App)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+        }
+      }
+    }
+
+    // =========================================================
+    // SECTION 4: EXPORT DATA (डेटा एक्सपोर्ट)
+    // =========================================================
+    Text(
+      text = "4. डेटा एक्सपोर्ट (Export Data)",
+      color = CyanNeon,
+      fontSize = 14.sp,
+      fontWeight = FontWeight.Bold
+    )
+
+    Box(
+      modifier = Modifier
+        .fillMaxWidth()
+        .clip(RoundedCornerShape(16.dp))
+        .background(DarkSurfaceElevated)
+        .border(1.dp, DarkSurfaceBorder, RoundedCornerShape(16.dp))
+        .clickable {
+          exportDialogInitialTab = ExportFormatTab.JSON
+          showExportDialog = true
+        }
+        .padding(14.dp)
+        .testTag("open_export_data_btn")
+    ) {
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+      ) {
+        Column(modifier = Modifier.weight(1f)) {
+          Text("डेटा एक्सपोर्ट करें (Export Data)", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+          Text("JSON, CSV, Markdown, Plain Text या AI कोचिंग विश्लेषण में कॉपी / शेयर करें", color = TextMuted, fontSize = 11.sp)
+        }
+        Icon(Icons.Default.ChevronRight, contentDescription = null, tint = TextMuted)
+      }
+    }
+
+    // =========================================================
+    // SECTION 5: IMPORT DATA (डेटा इम्पोर्ट / रीस्टोर)
+    // =========================================================
+    Text(
+      text = "5. डेटा इम्पोर्ट (Import Data)",
+      color = VioletNeon,
+      fontSize = 14.sp,
+      fontWeight = FontWeight.Bold
+    )
+
+    Box(
+      modifier = Modifier
+        .fillMaxWidth()
+        .clip(RoundedCornerShape(16.dp))
+        .background(DarkSurfaceElevated)
+        .border(1.dp, DarkSurfaceBorder, RoundedCornerShape(16.dp))
+        .clickable {
+          exportDialogInitialTab = ExportFormatTab.IMPORT
+          showExportDialog = true
+        }
+        .padding(14.dp)
+        .testTag("open_import_data_btn")
+    ) {
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+      ) {
+        Column(modifier = Modifier.weight(1f)) {
+          Text("डेटा इम्पोर्ट / रिस्टोर करें (Import Data)", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+          Text("JSON टेक्स्ट पेस्ट करके सीधे डेटाबेस में डेटा पुनर्स्थापित करें", color = TextMuted, fontSize = 11.sp)
+        }
+        Icon(Icons.Default.ChevronRight, contentDescription = null, tint = TextMuted)
+      }
+    }
+  }
+
+  // Restore Dialog
+  if (showRestoreDialog) {
+    RestoreBackupsDialog(
+      initialFolderUri = folderUri,
+      onDismiss = { showRestoreDialog = false },
+      onRestoreSuccess = {
+        refreshTrigger++
+        Toast.makeText(context, "डेटा पुनर्स्थापित हो गया!", Toast.LENGTH_SHORT).show()
+        (context as? android.app.Activity)?.recreate()
+      },
+      onOpenPermissionsStatus = {
+        showRestoreDialog = false
+      }
+    )
+  }
+
+  // Step 1: Reset App Warning Dialog
+  if (showResetWarningDialog) {
+    ResetAppWarningDialog(
+      onDismiss = { showResetWarningDialog = false },
+      onBackupFirst = {
+        showResetWarningDialog = false
+        if (isFolderAccessible) {
+          coroutineScope.launch {
+            val res = com.example.backup.BackupManager.performBackup(context)
+            if (res.isSuccess) {
+              Toast.makeText(context, "✅ बैकअप सुरक्षित सहेजा गया! अब आप चाहें तो रीसेट जारी रख सकते हैं।", Toast.LENGTH_LONG).show()
+              showResetConfirmDialog = true
+            } else {
+              Toast.makeText(context, "बैकअप विफल: ${res.exceptionOrNull()?.localizedMessage}", Toast.LENGTH_LONG).show()
+            }
+          }
+        } else {
+          Toast.makeText(context, "कृपया पहले बैकअप फ़ोल्डर चुनें", Toast.LENGTH_SHORT).show()
+          folderLauncher.launch(null)
+        }
+      },
+      onContinue = {
+        showResetWarningDialog = false
+        showResetConfirmDialog = true
+      }
+    )
+  }
+
+  // Step 2: Final Confirmation Dialog
+  if (showResetConfirmDialog) {
+    ResetAppConfirmDialog(
+      isResetting = isResettingApp,
+      onDismiss = { showResetConfirmDialog = false },
+      onConfirmReset = {
+        isResettingApp = true
+        viewModel.resetAppToFreshState { success, msg ->
+          isResettingApp = false
+          showResetConfirmDialog = false
+          refreshTrigger++
+          Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+          if (success) {
+            (context as? android.app.Activity)?.recreate()
+          }
+        }
+      }
+    )
+  }
+
+  // Time Picker Dialog
+  if (showTimePicker) {
+    val (curH, curM) = backupTime
+    TimePickerDialog12Hour(
+      initialMinutes = curH * 60 + curM,
+      onDismiss = { showTimePicker = false },
+      onConfirm = { mins ->
+        val newH = (mins / 60) % 24
+        val newM = mins % 60
+        com.example.backup.BackupPreferences.setBackupTime(context, newH, newM)
+        com.example.backup.DailyBackupWorker.schedulePeriodic(context)
+        showTimePicker = false
+        refreshTrigger++
+      }
+    )
+  }
+
+  // Advanced Export / Import Dialog
   if (showExportDialog) {
     ExportImportDialog(
+      initialTab = exportDialogInitialTab,
       onDismiss = { showExportDialog = false },
       onGenerateContent = { tab ->
         when (tab) {

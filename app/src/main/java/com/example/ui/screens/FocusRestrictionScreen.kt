@@ -31,6 +31,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.CenterFocusStrong
 import androidx.compose.material.icons.filled.Healing
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Timer
@@ -108,11 +109,21 @@ fun FocusRestrictionScreen(
   var showAllowedAppsDialog by remember { mutableStateOf(false) }
 
   var remainingMillis by remember { mutableLongStateOf(FocusModeManager.getRemainingSessionMillis(context)) }
+  var isStrictLock by remember { mutableStateOf(FocusModeManager.isStrictLockActive(context)) }
+  var strictLockReason by remember { mutableStateOf(FocusModeManager.getStrictLockReason(context)) }
 
   // Ticker for real-time countdown (every second)
   LaunchedEffect(Unit) {
     while (true) {
       remainingMillis = FocusModeManager.getRemainingSessionMillis(context)
+      isStrictLock = FocusModeManager.isStrictLockActive(context)
+      if (isStrictLock) {
+        strictLockReason = FocusModeManager.getStrictLockReason(context)
+      }
+      if (remainingMillis <= 0L) {
+        FocusModeManager.deactivateFocusMode(context, force = true)
+        break
+      }
       delay(1000L)
     }
   }
@@ -149,8 +160,8 @@ fun FocusRestrictionScreen(
         Box(
           modifier = Modifier
             .clip(RoundedCornerShape(20.dp))
-            .background(GoldBrass.copy(alpha = 0.15f))
-            .border(1.dp, GoldBrass.copy(alpha = 0.4f), RoundedCornerShape(20.dp))
+            .background(if (isStrictLock) Color(0xFFEF4444).copy(alpha = 0.2f) else GoldBrass.copy(alpha = 0.15f))
+            .border(1.dp, if (isStrictLock) Color(0xFFEF4444).copy(alpha = 0.6f) else GoldBrass.copy(alpha = 0.4f), RoundedCornerShape(20.dp))
             .padding(horizontal = 14.dp, vertical = 6.dp)
         ) {
           Row(verticalAlignment = Alignment.CenterVertically) {
@@ -158,12 +169,12 @@ fun FocusRestrictionScreen(
               modifier = Modifier
                 .size(7.dp)
                 .clip(CircleShape)
-                .background(GoldBrass)
+                .background(if (isStrictLock) Color(0xFFEF4444) else GoldBrass)
             )
             Spacer(modifier = Modifier.width(6.dp))
             Text(
-              text = "FOCUS MODE ACTIVE • डिजिटल अनुशासन",
-              color = GoldBrass,
+              text = if (isStrictLock) "🚨 STRICT LOCK ACTIVE • सख्त डिजिटल अनुशासन" else "FOCUS MODE ACTIVE • डिजिटल अनुशासन",
+              color = if (isStrictLock) Color(0xFFFF6B6B) else GoldBrass,
               fontSize = 11.sp,
               fontWeight = FontWeight.Bold,
               letterSpacing = 1.0.sp
@@ -247,8 +258,12 @@ fun FocusRestrictionScreen(
           .clip(RoundedCornerShape(24.dp))
           .background(ObsidianElevated)
           .border(
-            width = 1.2.dp,
-            brush = Brush.linearGradient(listOf(GoldBrass.copy(alpha = 0.5f), ObsidianBorder, GoldDark.copy(alpha = 0.3f))),
+            width = 1.4.dp,
+            brush = if (isStrictLock) {
+              Brush.linearGradient(listOf(Color(0xFFEF4444), Color(0xFF7F1D1D), Color(0xFFEF4444)))
+            } else {
+              Brush.linearGradient(listOf(GoldBrass.copy(alpha = 0.5f), ObsidianBorder, GoldDark.copy(alpha = 0.3f)))
+            },
             shape = RoundedCornerShape(24.dp)
           )
           .padding(20.dp)
@@ -264,12 +279,24 @@ fun FocusRestrictionScreen(
               .size(64.dp)
               .clip(CircleShape)
               .background(
-                Brush.radialGradient(listOf(GoldBrass.copy(alpha = 0.25f), ObsidianElevated))
+                Brush.radialGradient(
+                  if (isStrictLock) listOf(Color(0xFFEF4444).copy(alpha = 0.3f), ObsidianElevated)
+                  else listOf(GoldBrass.copy(alpha = 0.25f), ObsidianElevated)
+                )
               )
-              .border(1.dp, GoldBrass.copy(alpha = 0.6f), CircleShape),
+              .border(
+                1.dp,
+                if (isStrictLock) Color(0xFFEF4444) else GoldBrass.copy(alpha = 0.6f),
+                CircleShape
+              ),
             contentAlignment = Alignment.Center
           ) {
-            Icon(Icons.Default.CenterFocusStrong, contentDescription = "Focus Icon", tint = GoldHighlight, modifier = Modifier.size(30.dp))
+            Icon(
+              imageVector = if (isStrictLock) Icons.Default.Shield else Icons.Default.CenterFocusStrong,
+              contentDescription = "Focus Icon",
+              tint = if (isStrictLock) Color(0xFFFF6B6B) else GoldHighlight,
+              modifier = Modifier.size(30.dp)
+            )
           }
 
           // Live Countdown Timer
@@ -295,15 +322,15 @@ fun FocusRestrictionScreen(
                 fontWeight = FontWeight.Bold
               )
               Text(
-                text = "सत्र समाप्ति तक शेष समय",
-                color = GoldBrass,
+                text = if (isStrictLock) "सख्त लॉक समाप्ति तक शेष समय" else "सत्र समाप्ति तक शेष समय",
+                color = if (isStrictLock) Color(0xFFFF6B6B) else GoldBrass,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Medium
               )
             }
           } else {
             Text(
-              text = "सक्रिय फोकस सत्र",
+              text = if (isStrictLock) "सख्त लॉक सक्रिय" else "सक्रिय फोकस सत्र",
               color = WarmOffWhite,
               fontFamily = ChronoSerifFamily,
               fontSize = 20.sp,
@@ -311,21 +338,54 @@ fun FocusRestrictionScreen(
             )
           }
 
+          // Strict Reason Callout
+          if (isStrictLock) {
+            Box(
+              modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(Color(0xFF3B1515))
+                .border(0.8.dp, Color(0xFFEF4444).copy(alpha = 0.4f), RoundedCornerShape(10.dp))
+                .padding(horizontal = 12.dp, vertical = 8.dp)
+            ) {
+              Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                Text(
+                  text = "🚨 $strictLockReason",
+                  color = Color(0xFFFFB4AB),
+                  fontSize = 12.sp,
+                  fontWeight = FontWeight.Bold,
+                  textAlign = TextAlign.Center
+                )
+                Text(
+                  text = "वयस्क / अनुपयुक्त सामग्री पहचान के कारण 15 मिनट का अनिवार्य लॉक",
+                  color = WarmOffWhite.copy(alpha = 0.8f),
+                  fontSize = 10.sp,
+                  textAlign = TextAlign.Center
+                )
+              }
+            }
+          }
+
           // Allowed Apps Pill / Selector Button
           Box(
             modifier = Modifier
               .clip(RoundedCornerShape(12.dp))
               .background(ObsidianCard)
-              .border(0.8.dp, GoldBrass.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
-              .clickable { showAllowedAppsDialog = true }
+              .border(0.8.dp, if (isStrictLock) Color(0xFFEF4444).copy(alpha = 0.4f) else GoldBrass.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
+              .clickable(enabled = !isStrictLock) { showAllowedAppsDialog = true }
               .padding(horizontal = 14.dp, vertical = 8.dp)
           ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-              Icon(Icons.Default.Apps, contentDescription = null, tint = GoldBrass, modifier = Modifier.size(16.dp))
+              Icon(
+                Icons.Default.Apps,
+                contentDescription = null,
+                tint = if (isStrictLock) Color(0xFFEF4444) else GoldBrass,
+                modifier = Modifier.size(16.dp)
+              )
               Spacer(modifier = Modifier.width(8.dp))
               Text(
-                text = "अनुमत ऐप्स: $allowedAppsCount चुने गए (बदलें)",
-                color = WarmOffWhite,
+                text = if (isStrictLock) "अनुमत ऐप्स: $allowedAppsCount (सख्त लॉक में बदलाव बंद 🔒)" else "अनुमत ऐप्स: $allowedAppsCount चुने गए (बदलें)",
+                color = if (isStrictLock) WarmParchment else WarmOffWhite,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.SemiBold
               )
@@ -354,72 +414,104 @@ fun FocusRestrictionScreen(
         }
       }
 
-      // 4. EXTEND / SESSION DURATION SHORTCUTS
-      Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-      ) {
-        Text("सत्र की अवधि निर्धारित / विस्तृत करें:", color = WarmParchment, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-        Row(
+      // 4. EXTEND / SESSION DURATION SHORTCUTS (Only when not in strict lock)
+      if (!isStrictLock) {
+        Column(
           modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.spacedBy(8.dp)
+          verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-          listOf(15 to "15m", 25 to "25m (पोमोडोरो)", 45 to "45m", 60 to "1h").forEach { (duration, label) ->
-            Box(
-              modifier = Modifier
-                .weight(1f)
-                .clip(RoundedCornerShape(10.dp))
-                .background(ObsidianElevated)
-                .border(0.8.dp, ObsidianBorder, RoundedCornerShape(10.dp))
-                .clickable {
-                  FocusModeManager.activateFocusDuration(context, duration)
-                  remainingMillis = duration * 60000L
-                }
-                .padding(vertical = 8.dp),
-              contentAlignment = Alignment.Center
-            ) {
-              Text(label, color = WarmOffWhite, fontSize = 11.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+          Text("सत्र की अवधि निर्धारित / विस्तृत करें:", color = WarmParchment, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+          ) {
+            listOf(15 to "15m", 25 to "25m (पोमोडोरो)", 45 to "45m", 60 to "1h").forEach { (duration, label) ->
+              Box(
+                modifier = Modifier
+                  .weight(1f)
+                  .clip(RoundedCornerShape(10.dp))
+                  .background(ObsidianElevated)
+                  .border(0.8.dp, ObsidianBorder, RoundedCornerShape(10.dp))
+                  .clickable {
+                    FocusModeManager.activateFocusDuration(context, duration)
+                    remainingMillis = duration * 60000L
+                  }
+                  .padding(vertical = 8.dp),
+                contentAlignment = Alignment.Center
+              ) {
+                Text(label, color = WarmOffWhite, fontSize = 11.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+              }
             }
           }
         }
       }
 
-      // 5. UNLOCK & EMERGENCY ACTIONS
-      Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-      ) {
-        Button(
-          onClick = { showMathChallenge = true },
-          colors = ButtonDefaults.buttonColors(containerColor = GoldBrass),
-          shape = RoundedCornerShape(14.dp),
+      // 5. UNLOCK & EMERGENCY ACTIONS (Strict Lock blocks all early unlocks)
+      if (isStrictLock) {
+        Box(
           modifier = Modifier
             .fillMaxWidth()
-            .height(48.dp)
-            .testTag("unlock_focus_button")
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color(0xFF281313))
+            .border(1.dp, Color(0xFFEF4444).copy(alpha = 0.6f), RoundedCornerShape(14.dp))
+            .padding(16.dp),
+          contentAlignment = Alignment.Center
         ) {
-          Icon(Icons.Default.LockOpen, contentDescription = null, tint = ObsidianElevated, modifier = Modifier.size(18.dp))
-          Spacer(modifier = Modifier.width(8.dp))
-          Text(
-            text = "फोकस से बाहर निकलें (गणित चुनौती हल करें)",
-            color = ObsidianElevated,
-            fontWeight = FontWeight.Bold,
-            fontSize = 13.sp
-          )
+          Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+          ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+              Icon(Icons.Default.Lock, contentDescription = null, tint = Color(0xFFEF4444), modifier = Modifier.size(20.dp))
+              Spacer(modifier = Modifier.width(8.dp))
+              Text("सख्त लॉक: 15 मिनट अनिवार्य", color = Color(0xFFEF4444), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            }
+            Text(
+              text = "वयस्क सामग्री पहचान के कारण यह सत्र बीच में बंद नहीं किया जा सकता। 15 मिनट पूर्ण होने पर फोन स्वतः सामान्य स्थिति में आएगा।",
+              color = WarmOffWhite.copy(alpha = 0.85f),
+              fontSize = 11.sp,
+              textAlign = TextAlign.Center,
+              lineHeight = 16.sp
+            )
+          }
         }
-
-        OutlinedButton(
-          onClick = { showEmergencySheet = true },
-          shape = RoundedCornerShape(14.dp),
-          border = androidx.compose.foundation.BorderStroke(1.dp, ObsidianBorder),
-          modifier = Modifier
-            .fillMaxWidth()
-            .height(44.dp)
-            .testTag("emergency_recovery_focus_button")
+      } else {
+        Column(
+          modifier = Modifier.fillMaxWidth(),
+          verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-          Icon(Icons.Default.Healing, contentDescription = null, tint = SageGreen, modifier = Modifier.size(16.dp))
-          Spacer(modifier = Modifier.width(8.dp))
-          Text("आपातकालीन रिकवरी मोड", color = WarmParchment, fontSize = 12.sp)
+          Button(
+            onClick = { showMathChallenge = true },
+            colors = ButtonDefaults.buttonColors(containerColor = GoldBrass),
+            shape = RoundedCornerShape(14.dp),
+            modifier = Modifier
+              .fillMaxWidth()
+              .height(48.dp)
+              .testTag("unlock_focus_button")
+          ) {
+            Icon(Icons.Default.LockOpen, contentDescription = null, tint = ObsidianElevated, modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+              text = "फोकस से बाहर निकलें (गणित चुनौती हल करें)",
+              color = ObsidianElevated,
+              fontWeight = FontWeight.Bold,
+              fontSize = 13.sp
+            )
+          }
+
+          OutlinedButton(
+            onClick = { showEmergencySheet = true },
+            shape = RoundedCornerShape(14.dp),
+            border = androidx.compose.foundation.BorderStroke(1.dp, ObsidianBorder),
+            modifier = Modifier
+              .fillMaxWidth()
+              .height(44.dp)
+              .testTag("emergency_recovery_focus_button")
+          ) {
+            Icon(Icons.Default.Healing, contentDescription = null, tint = SageGreen, modifier = Modifier.size(16.dp))
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("आपातकालीन रिकवरी मोड", color = WarmParchment, fontSize = 12.sp)
+          }
         }
       }
     }

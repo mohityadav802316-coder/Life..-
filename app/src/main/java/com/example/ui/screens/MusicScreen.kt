@@ -10,12 +10,14 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -24,94 +26,122 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Album
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Equalizer
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.FolderOff
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Lyrics
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
-import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.PlaylistPlay
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Repeat
-import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Shuffle
-import androidx.compose.material.icons.filled.SkipNext
-import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Divider
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.data.model.MusicMood
+import coil.compose.AsyncImage
 import com.example.data.model.PlaylistEntity
-import com.example.data.model.PlaylistRuleEntity
 import com.example.data.model.SongEntity
+import com.example.music.FolderBlacklistManager
 import com.example.music.LocalMusicScanner
-import com.example.music.RepeatMode
+import com.example.music.MusicPlayerState
+import com.example.ui.components.AddToMoodPlaylistDialog
+import com.example.ui.components.CreateMoodPlaylistDialog
+import com.example.ui.components.EqualizerDialog
+import com.example.ui.components.FolderBlacklistDialog
+import com.example.ui.components.LrcLyricsDialog
+import com.example.ui.components.MiniMusicPlayer
+import com.example.ui.components.NowPlayingScreenDialog
+import com.example.ui.components.QueueBottomSheetDialog
+import com.example.ui.components.SleepTimerDialog
 import com.example.ui.theme.CyanNeon
 import com.example.ui.theme.DarkBackground
 import com.example.ui.theme.DarkSurface
 import com.example.ui.theme.DarkSurfaceBorder
 import com.example.ui.theme.DarkSurfaceElevated
-import com.example.ui.theme.GlassGradient
-import com.example.ui.theme.StatusComplete
+import com.example.ui.theme.GoldBrass
+import com.example.ui.theme.ObsidianCharcoal
+import com.example.ui.theme.SageGreen
 import com.example.ui.theme.TextMuted
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 import com.example.ui.theme.VioletNeon
 import com.example.ui.viewmodel.LifeTrackerViewModel
 import com.example.util.TimeUtils
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
-enum class MusicSubTab(val title: String) {
-  NOW_PLAYING("Now Playing"),
-  PLAYLISTS("Playlists"),
-  ALL_SONGS("All Songs"),
-  MOOD_RULES("Time & Mood"),
-  FAVORITES("Favorites")
+enum class MusicMainTab(val titleHi: String, val titleEn: String) {
+  SONGS("गाने", "Songs"),
+  ALBUMS("एल्बम", "Albums"),
+  ARTISTS("कलाकार", "Artists"),
+  MOODS("मूड प्लेलिस्ट", "Moods"),
+  FOLDERS("फ़ोल्डर", "Folders")
+}
+
+enum class SongFilterType {
+  ALL, FAVORITES, RECENT
 }
 
 @Composable
@@ -120,27 +150,68 @@ fun MusicScreen(
   modifier: Modifier = Modifier
 ) {
   val context = LocalContext.current
+  val coroutineScope = rememberCoroutineScope()
   val playerState by viewModel.musicPlayerState.collectAsState()
   val allSongs by viewModel.allSongs.collectAsState()
   val allPlaylists by viewModel.allPlaylists.collectAsState()
-  val playlistRules by viewModel.playlistRules.collectAsState()
   val favoriteSongs by viewModel.favoriteSongs.collectAsState()
   val recentlyPlayed by viewModel.recentlyPlayedSongs.collectAsState()
 
-  var selectedSubTab by remember { mutableStateOf(MusicSubTab.NOW_PLAYING) }
-  var showCreatePlaylistDialog by remember { mutableStateOf(false) }
-  var showAddRuleDialog by remember { mutableStateOf(false) }
-  var selectedPlaylistForDetail by remember { mutableStateOf<PlaylistEntity?>(null) }
-  var songToAddFromPicker by remember { mutableStateOf<SongEntity?>(null) }
+  var selectedTab by remember { mutableStateOf(MusicMainTab.SONGS) }
+  var selectedFilter by remember { mutableStateOf(SongFilterType.ALL) }
+  var searchQuery by remember { mutableStateOf("") }
 
+  // Dialog states
+  var showNowPlayingDialog by remember { mutableStateOf(false) }
+  var showEqualizerDialog by remember { mutableStateOf(false) }
+  var showSleepTimerDialog by remember { mutableStateOf(false) }
+  var showLyricsDialogForSong by remember { mutableStateOf<SongEntity?>(null) }
+  var showQueueDialog by remember { mutableStateOf(false) }
+  var showCreateMoodDialog by remember { mutableStateOf(false) }
+  var showAddToMoodDialogForSong by remember { mutableStateOf<SongEntity?>(null) }
+  var songMoodPlaylistIds by remember { mutableStateOf<List<Long>>(emptyList()) }
+  var showFolderBlacklistDialog by remember { mutableStateOf(false) }
+
+  // Folder scanning state
+  var folderList by remember { mutableStateOf<List<Pair<String, Int>>>(emptyList()) }
+
+  // Media permission launcher
   val permissionLauncher = rememberLauncherForActivityResult(
     ActivityResultContracts.RequestPermission()
   ) { granted ->
     if (granted) {
       viewModel.scanDeviceMusic()
-      Toast.makeText(context, "Scanning local songs...", Toast.LENGTH_SHORT).show()
+      Toast.makeText(context, "म्यूजिक स्कैनिंग शुरू...", Toast.LENGTH_SHORT).show()
+    }
+  }
+
+  LaunchedEffect(Unit) {
+    if (LocalMusicScanner.hasStoragePermission(context)) {
+      if (allSongs.isEmpty()) {
+        viewModel.scanDeviceMusic()
+      }
+      coroutineScope.launch {
+        folderList = LocalMusicScanner.getFolders(context)
+      }
+    }
+  }
+
+  // Filtered song list based on search and quick filter
+  val displayedSongs = remember(allSongs, favoriteSongs, recentlyPlayed, selectedFilter, searchQuery) {
+    val baseList = when (selectedFilter) {
+      SongFilterType.ALL -> allSongs
+      SongFilterType.FAVORITES -> favoriteSongs
+      SongFilterType.RECENT -> recentlyPlayed
+    }
+    if (searchQuery.isBlank()) {
+      baseList
     } else {
-      Toast.makeText(context, "Storage permission denied. Using built-in tranquil audio.", Toast.LENGTH_LONG).show()
+      val q = searchQuery.trim().lowercase()
+      baseList.filter {
+        it.title.lowercase().contains(q) ||
+        it.artist.lowercase().contains(q) ||
+        it.album.lowercase().contains(q)
+      }
     }
   }
 
@@ -148,890 +219,611 @@ fun MusicScreen(
     modifier = modifier
       .fillMaxSize()
       .background(DarkBackground)
-      .statusBarsPadding()
   ) {
-    Column(modifier = Modifier.fillMaxSize()) {
-      // 1. Top Bar
+    Column(
+      modifier = Modifier
+        .fillMaxSize()
+        .statusBarsPadding()
+    ) {
+      // --- Top App Bar ---
       Row(
         modifier = Modifier
           .fillMaxWidth()
-          .padding(horizontal = 16.dp, vertical = 8.dp),
+          .padding(horizontal = 16.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
       ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-          IconButton(
-            onClick = {
-              if (selectedPlaylistForDetail != null) {
-                selectedPlaylistForDetail = null
-              } else {
-                viewModel.navigateBack()
-              }
-            },
-            modifier = Modifier.size(38.dp)
+          Box(
+            modifier = Modifier
+              .size(36.dp)
+              .clip(CircleShape)
+              .background(CyanNeon.copy(alpha = 0.15f)),
+            contentAlignment = Alignment.Center
           ) {
-            Icon(
-              imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-              contentDescription = "Back",
-              tint = TextPrimary
-            )
+            Icon(Icons.Default.MusicNote, contentDescription = null, tint = CyanNeon, modifier = Modifier.size(20.dp))
           }
-          Spacer(modifier = Modifier.width(8.dp))
+          Spacer(modifier = Modifier.width(10.dp))
           Column {
-            Text(
-              text = "PERSONAL MUSIC MANAGER • संगीत",
-              color = CyanNeon,
-              fontSize = 11.sp,
-              fontWeight = FontWeight.Bold,
-              letterSpacing = 1.sp
-            )
-            Text(
-              text = selectedPlaylistForDetail?.name ?: "Life Tracker Music",
-              color = TextPrimary,
-              fontSize = 18.sp,
-              fontWeight = FontWeight.Bold
-            )
+            Text("ऑफलाइन म्यूजिक प्लेयर", color = TextPrimary, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Text("${allSongs.size} गाने • स्थानीय स्टोरेज", color = TextMuted, fontSize = 11.sp)
           }
         }
 
         Row(verticalAlignment = Alignment.CenterVertically) {
-          // Scan device audio button
+          // Folder Blacklist shortcut
+          IconButton(onClick = { showFolderBlacklistDialog = true }) {
+            Icon(Icons.Default.FolderOff, contentDescription = "Blacklist", tint = TextSecondary, modifier = Modifier.size(22.dp))
+          }
+
+          // Equalizer shortcut
+          IconButton(onClick = { showEqualizerDialog = true }) {
+            Icon(Icons.Default.Equalizer, contentDescription = "Equalizer", tint = VioletNeon, modifier = Modifier.size(22.dp))
+          }
+
+          // Sleep timer shortcut
+          IconButton(onClick = { showSleepTimerDialog = true }) {
+            Icon(Icons.Default.Timer, contentDescription = "Sleep Timer", tint = GoldBrass, modifier = Modifier.size(22.dp))
+          }
+
+          // Refresh / Rescan
           IconButton(
             onClick = {
-              val perm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                Manifest.permission.READ_MEDIA_AUDIO
-              } else {
-                Manifest.permission.READ_EXTERNAL_STORAGE
-              }
               if (LocalMusicScanner.hasStoragePermission(context)) {
                 viewModel.scanDeviceMusic()
-                Toast.makeText(context, "Scanning local audio files...", Toast.LENGTH_SHORT).show()
+                coroutineScope.launch { folderList = LocalMusicScanner.getFolders(context) }
+                Toast.makeText(context, "म्यूजिक स्कैन चालू...", Toast.LENGTH_SHORT).show()
               } else {
+                val perm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                  Manifest.permission.READ_MEDIA_AUDIO
+                } else {
+                  Manifest.permission.READ_EXTERNAL_STORAGE
+                }
                 permissionLauncher.launch(perm)
               }
-            },
-            modifier = Modifier.size(38.dp)
+            }
           ) {
-            Icon(
-              Icons.Default.Refresh,
-              contentDescription = "Scan Audio",
-              tint = CyanNeon,
-              modifier = Modifier.size(20.dp)
-            )
+            Icon(Icons.Default.Refresh, contentDescription = "Rescan", tint = TextPrimary)
           }
         }
       }
 
-      // 2. Tab Row
-      TabRow(
-        selectedTabIndex = selectedSubTab.ordinal,
+      // --- Search Bar ---
+      Box(
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(horizontal = 16.dp, vertical = 4.dp)
+      ) {
+        OutlinedTextField(
+          value = searchQuery,
+          onValueChange = { searchQuery = it },
+          placeholder = { Text("गाना, कलाकार या एल्बम खोजें...", color = TextMuted, fontSize = 13.sp) },
+          leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = TextMuted) },
+          trailingIcon = {
+            if (searchQuery.isNotEmpty()) {
+              IconButton(onClick = { searchQuery = "" }) {
+                Icon(Icons.Default.Clear, contentDescription = "Clear", tint = TextMuted)
+              }
+            }
+          },
+          singleLine = true,
+          shape = RoundedCornerShape(14.dp),
+          colors = OutlinedTextFieldDefaults.colors(
+            focusedContainerColor = DarkSurfaceElevated,
+            unfocusedContainerColor = DarkSurfaceElevated,
+            focusedBorderColor = CyanNeon.copy(alpha = 0.5f),
+            unfocusedBorderColor = DarkSurfaceBorder,
+            focusedTextColor = TextPrimary,
+            unfocusedTextColor = TextPrimary
+          ),
+          modifier = Modifier.fillMaxWidth().testTag("music_search_bar")
+        )
+      }
+
+      // --- Quick Filters: All / Favorites / Recent ---
+      Row(
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(horizontal = 16.dp, vertical = 6.dp)
+          .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+      ) {
+        FilterChipItem(
+          label = "सभी गाने (${allSongs.size})",
+          isSelected = selectedFilter == SongFilterType.ALL,
+          onClick = { selectedFilter = SongFilterType.ALL }
+        )
+        FilterChipItem(
+          label = "पसंदीदा (${favoriteSongs.size})",
+          isSelected = selectedFilter == SongFilterType.FAVORITES,
+          icon = Icons.Default.Favorite,
+          iconTint = Color(0xFFEC4899),
+          onClick = { selectedFilter = SongFilterType.FAVORITES }
+        )
+        FilterChipItem(
+          label = "हाल ही में (${recentlyPlayed.size})",
+          isSelected = selectedFilter == SongFilterType.RECENT,
+          icon = Icons.Default.History,
+          iconTint = GoldBrass,
+          onClick = { selectedFilter = SongFilterType.RECENT }
+        )
+      }
+
+      // --- 5 Main Tabs (Songs, Albums, Artists, Moods, Folders) ---
+      ScrollableTabRow(
+        selectedTabIndex = selectedTab.ordinal,
         containerColor = DarkBackground,
         contentColor = CyanNeon,
+        edgePadding = 16.dp,
         indicator = { tabPositions ->
           TabRowDefaults.SecondaryIndicator(
-            Modifier.tabIndicatorOffset(tabPositions[selectedSubTab.ordinal]),
-            color = CyanNeon,
-            height = 2.5.dp
+            modifier = Modifier.tabIndicatorOffset(tabPositions[selectedTab.ordinal]),
+            color = CyanNeon
           )
         },
-        divider = {
-          Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(DarkSurfaceBorder))
-        }
+        divider = { Divider(color = DarkSurfaceBorder) }
       ) {
-        MusicSubTab.entries.forEach { tab ->
+        MusicMainTab.entries.forEach { tab ->
           Tab(
-            selected = selectedSubTab == tab,
-            onClick = {
-              selectedSubTab = tab
-              selectedPlaylistForDetail = null
-            },
+            selected = selectedTab == tab,
+            onClick = { selectedTab = tab },
             text = {
               Text(
-                text = tab.title,
-                fontSize = 12.sp,
-                fontWeight = if (selectedSubTab == tab) FontWeight.Bold else FontWeight.Medium,
-                color = if (selectedSubTab == tab) CyanNeon else TextSecondary
+                text = "${tab.titleHi} (${tab.titleEn})",
+                fontSize = 13.sp,
+                fontWeight = if (selectedTab == tab) FontWeight.Bold else FontWeight.Normal
               )
             }
           )
         }
       }
 
-      // 3. Tab Content
-      Box(modifier = Modifier.fillMaxSize().weight(1f)) {
-        when (selectedSubTab) {
-          MusicSubTab.NOW_PLAYING -> {
-            NowPlayingView(
-              state = playerState,
-              onPlayPause = { viewModel.toggleMusicPlayPause() },
-              onNext = { viewModel.nextMusicSong() },
-              onPrev = { viewModel.previousMusicSong() },
-              onSeek = { viewModel.seekMusicTo(it) },
-              onToggleShuffle = { viewModel.toggleMusicShuffle() },
-              onToggleRepeat = { viewModel.toggleMusicRepeat() },
-              onToggleFavorite = { song -> viewModel.toggleSongFavorite(song) },
-              onSetSleepTimer = { mins -> viewModel.setMusicSleepTimer(mins) }
-            )
-          }
-          MusicSubTab.PLAYLISTS -> {
-            val detailPlaylist = selectedPlaylistForDetail
-            if (detailPlaylist == null) {
-              PlaylistsListView(
-                playlists = allPlaylists,
-                onCreatePlaylistClick = { showCreatePlaylistDialog = true },
-                onSelectPlaylist = { selectedPlaylistForDetail = it },
-                onDeletePlaylist = { viewModel.deletePlaylist(it.id) }
-              )
-            } else {
-              PlaylistDetailView(
-                playlist = detailPlaylist,
-                viewModel = viewModel,
-                onBack = { selectedPlaylistForDetail = null }
-              )
-            }
-          }
-          MusicSubTab.ALL_SONGS -> {
-            AllSongsView(
-              songs = allSongs,
-              playlists = allPlaylists,
+      // --- Tab Content ---
+      Box(
+        modifier = Modifier
+          .weight(1f)
+          .fillMaxWidth()
+      ) {
+        when (selectedTab) {
+          MusicMainTab.SONGS -> {
+            SongsListTab(
+              songs = displayedSongs,
               currentSongId = playerState.currentSong?.id,
               isPlaying = playerState.isPlaying,
-              onPlaySong = { song -> viewModel.playSong(song) },
-              onPlayAll = { songs -> viewModel.playMusicQueue(songs, 0) },
-              onToggleFavorite = { song -> viewModel.toggleSongFavorite(song) },
-              onAddSongToPlaylist = { playlistId, songId ->
-                viewModel.addSongToPlaylist(playlistId, songId)
-                Toast.makeText(context, "Song added to playlist", Toast.LENGTH_SHORT).show()
+              onPlaySong = { song, index ->
+                viewModel.playMusicQueue(displayedSongs, index)
+              },
+              onPlayNext = { song ->
+                viewModel.playNextSong(song)
+                Toast.makeText(context, "अगला गाना सेट: ${song.title}", Toast.LENGTH_SHORT).show()
+              },
+              onAddToQueue = { song ->
+                viewModel.addSongToQueue(song)
+                Toast.makeText(context, "कतार में जोड़ा गया: ${song.title}", Toast.LENGTH_SHORT).show()
+              },
+              onAddToMood = { song ->
+                viewModel.getPlaylistsForSong(song.id) { ids ->
+                  songMoodPlaylistIds = ids
+                  showAddToMoodDialogForSong = song
+                }
+              },
+              onToggleFavorite = { viewModel.toggleSongFavorite(it) },
+              onViewLyrics = { showLyricsDialogForSong = it },
+              onRequestPermission = {
+                val perm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                  Manifest.permission.READ_MEDIA_AUDIO
+                } else {
+                  Manifest.permission.READ_EXTERNAL_STORAGE
+                }
+                permissionLauncher.launch(perm)
               }
             )
           }
-          MusicSubTab.MOOD_RULES -> {
-            MoodRulesView(
-              rules = playlistRules,
+
+          MusicMainTab.ALBUMS -> {
+            AlbumsGridTab(
+              allSongs = allSongs,
+              onPlayAlbum = { albumSongs ->
+                viewModel.playMusicQueue(albumSongs, 0)
+              }
+            )
+          }
+
+          MusicMainTab.ARTISTS -> {
+            ArtistsListTab(
+              allSongs = allSongs,
+              onPlayArtist = { artistSongs ->
+                viewModel.playMusicQueue(artistSongs, 0)
+              }
+            )
+          }
+
+          MusicMainTab.MOODS -> {
+            MoodPlaylistsTab(
               playlists = allPlaylists,
-              onAddRuleClick = { showAddRuleDialog = true },
-              onDeleteRule = { viewModel.deletePlaylistRule(it) },
-              onPlayRuleNow = { viewModel.playByCurrentTimeRule() }
+              allSongs = allSongs,
+              onPlayMood = { playlist, shuffle ->
+                coroutineScope.launch {
+                  val db = com.example.data.db.LifeTrackerDatabase.getDatabase(context)
+                  val playlistSongs = db.musicDao().getSongsForPlaylistSync(playlist.id)
+                  if (playlistSongs.isNotEmpty()) {
+                    val finalQueue = if (shuffle) playlistSongs.shuffled() else playlistSongs
+                    viewModel.playMusicQueue(finalQueue, 0, playlist = playlist)
+                  } else {
+                    Toast.makeText(context, "इस मूड प्लेलिस्ट में कोई गाना नहीं है! गानों की लिस्ट से गाने जोड़ें।", Toast.LENGTH_SHORT).show()
+                  }
+                }
+              },
+              onOpenCreateMood = { showCreateMoodDialog = true },
+              onDeleteMood = { playlistId ->
+                viewModel.deletePlaylist(playlistId)
+                Toast.makeText(context, "मूड प्लेलिस्ट हटाई गई", Toast.LENGTH_SHORT).show()
+              }
             )
           }
-          MusicSubTab.FAVORITES -> {
-            FavoritesAndHistoryView(
-              favoriteSongs = favoriteSongs,
-              recentlyPlayed = recentlyPlayed,
-              onPlaySong = { song -> viewModel.playSong(song) },
-              onToggleFavorite = { song -> viewModel.toggleSongFavorite(song) }
-            )
-          }
-        }
-      }
-    }
 
-    // Dialogs
-    if (showCreatePlaylistDialog) {
-      CreatePlaylistDialog(
-        onDismiss = { showCreatePlaylistDialog = false },
-        onCreate = { name, desc, color ->
-          viewModel.createPlaylist(name, desc, color)
-          showCreatePlaylistDialog = false
-        }
-      )
-    }
-
-    if (showAddRuleDialog) {
-      AddPlaylistRuleDialog(
-        playlists = allPlaylists,
-        onDismiss = { showAddRuleDialog = false },
-        onAdd = { rule ->
-          viewModel.addPlaylistRule(rule)
-          showAddRuleDialog = false
-        }
-      )
-    }
-  }
-}
-
-// -------------------------------------------------------------
-// 1. NOW PLAYING VIEW
-// -------------------------------------------------------------
-@Composable
-private fun NowPlayingView(
-  state: com.example.music.MusicPlayerState,
-  onPlayPause: () -> Unit,
-  onNext: () -> Unit,
-  onPrev: () -> Unit,
-  onSeek: (Long) -> Unit,
-  onToggleShuffle: () -> Unit,
-  onToggleRepeat: () -> Unit,
-  onToggleFavorite: (SongEntity) -> Unit,
-  onSetSleepTimer: (Int) -> Unit
-) {
-  val song = state.currentSong
-  var showSleepTimerMenu by remember { mutableStateOf(false) }
-
-  LazyColumn(
-    modifier = Modifier
-      .fillMaxSize()
-      .padding(horizontal = 24.dp),
-    contentPadding = PaddingValues(top = 16.dp, bottom = 100.dp),
-    horizontalAlignment = Alignment.CenterHorizontally,
-    verticalArrangement = Arrangement.spacedBy(16.dp)
-  ) {
-    item {
-      // Album Art Aura Container
-      Box(
-        modifier = Modifier
-          .size(240.dp)
-          .clip(RoundedCornerShape(32.dp))
-          .background(
-            Brush.radialGradient(
-              listOf(
-                CyanNeon.copy(alpha = 0.35f),
-                VioletNeon.copy(alpha = 0.25f),
-                DarkSurfaceElevated
-              )
-            )
-          )
-          .border(2.dp, DarkSurfaceBorder, RoundedCornerShape(32.dp)),
-        contentAlignment = Alignment.Center
-      ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-          Icon(
-            imageVector = Icons.Default.MusicNote,
-            contentDescription = null,
-            tint = CyanNeon,
-            modifier = Modifier.size(72.dp)
-          )
-          Spacer(modifier = Modifier.height(8.dp))
-          Text(
-            text = song?.mood?.let { "${MusicMood.fromString(it).emoji} ${MusicMood.fromString(it).titleEn}" } ?: "🎵 Tranquil Flow",
-            color = TextSecondary,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Bold
-          )
-        }
-      }
-    }
-
-    item {
-      // Song Title, Artist, and Favorite
-      Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-      ) {
-        Column(modifier = Modifier.weight(1f)) {
-          Text(
-            text = song?.title ?: "Select a Song or Playlist",
-            color = TextPrimary,
-            fontSize = 18.sp,
-            fontWeight = FontWeight.Bold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-          )
-          Spacer(modifier = Modifier.height(2.dp))
-          Text(
-            text = song?.let { "${it.artist} • ${it.album}" } ?: "Life Tracker Local Music Manager",
-            color = TextMuted,
-            fontSize = 12.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-          )
-        }
-
-        if (song != null) {
-          IconButton(onClick = { onToggleFavorite(song) }) {
-            Icon(
-              imageVector = if (song.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-              contentDescription = "Favorite",
-              tint = if (song.isFavorite) Color(0xFFFF4081) else TextMuted
+          MusicMainTab.FOLDERS -> {
+            FoldersTab(
+              folders = folderList,
+              onOpenFolderBlacklist = { showFolderBlacklistDialog = true }
             )
           }
         }
       }
-    }
 
-    item {
-      // Seekbar
-      val currentSec = (state.currentPositionMs / 1000).toInt()
-      val totalSec = (state.durationMs / 1000).toInt().coerceAtLeast(1)
-
-      Column(modifier = Modifier.fillMaxWidth()) {
-        Slider(
-          value = state.currentPositionMs.toFloat(),
-          onValueChange = { onSeek(it.toLong()) },
-          valueRange = 0f..state.durationMs.toFloat().coerceAtLeast(1f),
-          colors = SliderDefaults.colors(
-            thumbColor = CyanNeon,
-            activeTrackColor = CyanNeon,
-            inactiveTrackColor = DarkSurfaceBorder
-          ),
-          modifier = Modifier.fillMaxWidth()
+      // --- Mini-Player Sticky at Bottom ---
+      if (playerState.currentSong != null) {
+        MiniMusicPlayer(
+          playerState = playerState,
+          onExpandNowPlaying = { showNowPlayingDialog = true },
+          onTogglePlayPause = { viewModel.toggleMusicPlayPause() },
+          onNext = { viewModel.nextMusicSong() },
+          onToggleFavorite = { viewModel.toggleSongFavorite(it) }
         )
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-          Text(
-            text = TimeUtils.formatSecondsToMmSs(currentSec),
-            color = TextMuted,
-            fontSize = 11.sp
-          )
-          Text(
-            text = TimeUtils.formatSecondsToMmSs(totalSec),
-            color = TextMuted,
-            fontSize = 11.sp
-          )
-        }
-      }
-    }
-
-    item {
-      // Main Playback Controls
-      Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceAround,
-        verticalAlignment = Alignment.CenterVertically
-      ) {
-        // Shuffle
-        IconButton(onClick = onToggleShuffle) {
-          Icon(
-            Icons.Default.Shuffle,
-            contentDescription = "Shuffle",
-            tint = if (state.isShuffle) CyanNeon else TextMuted
-          )
-        }
-
-        // Previous
-        IconButton(
-          onClick = onPrev,
-          modifier = Modifier.size(48.dp)
-        ) {
-          Icon(
-            Icons.Default.SkipPrevious,
-            contentDescription = "Previous",
-            tint = TextPrimary,
-            modifier = Modifier.size(32.dp)
-          )
-        }
-
-        // Play / Pause Main Button
-        Box(
-          modifier = Modifier
-            .size(64.dp)
-            .clip(CircleShape)
-            .background(Brush.linearGradient(listOf(CyanNeon, VioletNeon)))
-            .clickable { onPlayPause() }
-            .testTag("music_play_pause_button"),
-          contentAlignment = Alignment.Center
-        ) {
-          Icon(
-            imageVector = if (state.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-            contentDescription = if (state.isPlaying) "Pause" else "Play",
-            tint = Color(0xFF0A101D),
-            modifier = Modifier.size(36.dp)
-          )
-        }
-
-        // Next
-        IconButton(
-          onClick = onNext,
-          modifier = Modifier.size(48.dp)
-        ) {
-          Icon(
-            Icons.Default.SkipNext,
-            contentDescription = "Next",
-            tint = TextPrimary,
-            modifier = Modifier.size(32.dp)
-          )
-        }
-
-        // Repeat
-        IconButton(onClick = onToggleRepeat) {
-          Icon(
-            imageVector = if (state.repeatMode == RepeatMode.ONE) Icons.Default.RepeatOne else Icons.Default.Repeat,
-            contentDescription = "Repeat",
-            tint = if (state.repeatMode != RepeatMode.OFF) CyanNeon else TextMuted
-          )
-        }
-      }
-    }
-
-    item {
-      // Secondary Controls: Sleep Timer, Situation / Playlist Banner
-      Row(
-        modifier = Modifier
-          .fillMaxWidth()
-          .clip(RoundedCornerShape(14.dp))
-          .background(DarkSurfaceElevated)
-          .border(1.dp, DarkSurfaceBorder, RoundedCornerShape(14.dp))
-          .padding(horizontal = 14.dp, vertical = 10.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-      ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-          Icon(Icons.Default.QueueMusic, contentDescription = null, tint = CyanNeon, modifier = Modifier.size(16.dp))
-          Spacer(modifier = Modifier.width(6.dp))
-          Text(
-            text = state.currentPlaylist?.name?.let { "Playlist: $it" } ?: "All Songs Queue",
-            color = TextSecondary,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Medium
-          )
-        }
-
-        Box {
-          TextButton(onClick = { showSleepTimerMenu = true }) {
-            Icon(Icons.Default.Timer, contentDescription = null, tint = CyanNeon, modifier = Modifier.size(14.dp))
-            Spacer(modifier = Modifier.width(4.dp))
-            Text(
-              text = if (state.sleepTimerMinutesRemaining > 0) "${state.sleepTimerMinutesRemaining}m" else "Sleep Timer",
-              color = CyanNeon,
-              fontSize = 11.sp,
-              fontWeight = FontWeight.Bold
-            )
-          }
-
-          DropdownMenu(
-            expanded = showSleepTimerMenu,
-            onDismissRequest = { showSleepTimerMenu = false },
-            modifier = Modifier.background(DarkSurfaceElevated)
-          ) {
-            listOf(0, 15, 30, 45, 60).forEach { mins ->
-              DropdownMenuItem(
-                text = { Text(if (mins == 0) "Turn Off" else "$mins Minutes", color = TextPrimary) },
-                onClick = {
-                  onSetSleepTimer(mins)
-                  showSleepTimerMenu = false
-                }
-              )
-            }
-          }
-        }
-      }
-    }
-  }
-}
-
-// -------------------------------------------------------------
-// 2. PLAYLISTS LIST VIEW
-// -------------------------------------------------------------
-@Composable
-private fun PlaylistsListView(
-  playlists: List<PlaylistEntity>,
-  onCreatePlaylistClick: () -> Unit,
-  onSelectPlaylist: (PlaylistEntity) -> Unit,
-  onDeletePlaylist: (PlaylistEntity) -> Unit
-) {
-  LazyColumn(
-    modifier = Modifier
-      .fillMaxSize()
-      .padding(horizontal = 16.dp),
-    contentPadding = PaddingValues(top = 14.dp, bottom = 100.dp),
-    verticalArrangement = Arrangement.spacedBy(12.dp)
-  ) {
-    // Header & Create Button
-    item {
-      Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-      ) {
-        Column {
-          Text("MY PLAYLISTS (अनलिमिटेड प्लेलिस्ट्स)", color = CyanNeon, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-          Text("Personalized Music Collections", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-        }
-
-        Button(
-          onClick = onCreatePlaylistClick,
-          colors = ButtonDefaults.buttonColors(containerColor = CyanNeon),
-          shape = RoundedCornerShape(10.dp)
-        ) {
-          Icon(Icons.Default.Add, contentDescription = null, tint = DarkBackground, modifier = Modifier.size(16.dp))
-          Spacer(modifier = Modifier.width(4.dp))
-          Text("New Playlist", color = DarkBackground, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-        }
-      }
-    }
-
-    items(playlists) { playlist ->
-      var showMenu by remember { mutableStateOf(false) }
-
-      Box(
-        modifier = Modifier
-          .fillMaxWidth()
-          .clip(RoundedCornerShape(16.dp))
-          .background(DarkSurfaceElevated)
-          .border(1.dp, DarkSurfaceBorder, RoundedCornerShape(16.dp))
-          .clickable { onSelectPlaylist(playlist) }
-          .padding(14.dp)
-      ) {
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.SpaceBetween,
-          verticalAlignment = Alignment.CenterVertically
-        ) {
-          Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.weight(1f)
-          ) {
-            Box(
-              modifier = Modifier
-                .size(46.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(Color(android.graphics.Color.parseColor(playlist.colorHex.ifBlank { "#00F0FF" })).copy(alpha = 0.2f)),
-              contentAlignment = Alignment.Center
-            ) {
-              Icon(
-                Icons.Default.PlaylistPlay,
-                contentDescription = null,
-                tint = Color(android.graphics.Color.parseColor(playlist.colorHex.ifBlank { "#00F0FF" })),
-                modifier = Modifier.size(24.dp)
-              )
-            }
-            Spacer(modifier = Modifier.width(12.dp))
-            Column {
-              Text(
-                text = playlist.name,
-                color = TextPrimary,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Bold
-              )
-              if (playlist.description.isNotBlank()) {
-                Text(
-                  text = playlist.description,
-                  color = TextMuted,
-                  fontSize = 11.sp
-                )
-              }
-            }
-          }
-
-          Box {
-            IconButton(onClick = { showMenu = true }) {
-              Icon(Icons.Default.MoreVert, contentDescription = null, tint = TextMuted)
-            }
-            DropdownMenu(
-              expanded = showMenu,
-              onDismissRequest = { showMenu = false },
-              modifier = Modifier.background(DarkSurfaceElevated)
-            ) {
-              DropdownMenuItem(
-                text = { Text("Open Playlist", color = TextPrimary) },
-                onClick = {
-                  showMenu = false
-                  onSelectPlaylist(playlist)
-                }
-              )
-              DropdownMenuItem(
-                text = { Text("Delete Playlist", color = Color(0xFFFF5252)) },
-                onClick = {
-                  showMenu = false
-                  onDeletePlaylist(playlist)
-                }
-              )
-            }
-          }
-        }
-      }
-    }
-  }
-}
-
-// -------------------------------------------------------------
-// 3. PLAYLIST DETAIL VIEW
-// -------------------------------------------------------------
-@Composable
-private fun PlaylistDetailView(
-  playlist: PlaylistEntity,
-  viewModel: LifeTrackerViewModel,
-  onBack: () -> Unit
-) {
-  val context = LocalContext.current
-  val songsFlow = remember(playlist.id) { viewModel.repository.getSongsForPlaylistFlow(playlist.id) }
-  val songs by songsFlow.collectAsState(initial = emptyList())
-  val allSongs by viewModel.allSongs.collectAsState()
-
-  var showAddSongsDialog by remember { mutableStateOf(false) }
-
-  LazyColumn(
-    modifier = Modifier
-      .fillMaxSize()
-      .padding(horizontal = 16.dp),
-    contentPadding = PaddingValues(top = 12.dp, bottom = 100.dp),
-    verticalArrangement = Arrangement.spacedBy(10.dp)
-  ) {
-    item {
-      Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-      ) {
-        Column {
-          Text(playlist.name, color = TextPrimary, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
-          Text("${songs.size} songs • ${playlist.description}", color = TextMuted, fontSize = 12.sp)
-        }
-
-        Row {
-          Button(
-            onClick = {
-              if (songs.isNotEmpty()) {
-                viewModel.playMusicQueue(songs, 0, playlist)
-              } else {
-                Toast.makeText(context, "Add songs to play", Toast.LENGTH_SHORT).show()
-              }
-            },
-            colors = ButtonDefaults.buttonColors(containerColor = CyanNeon),
-            shape = RoundedCornerShape(10.dp)
-          ) {
-            Icon(Icons.Default.PlayArrow, contentDescription = null, tint = DarkBackground, modifier = Modifier.size(16.dp))
-            Spacer(modifier = Modifier.width(4.dp))
-            Text("Play All", color = DarkBackground, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-          }
-
-          Spacer(modifier = Modifier.width(8.dp))
-
-          IconButton(
-            onClick = { showAddSongsDialog = true },
-            modifier = Modifier
-              .clip(CircleShape)
-              .background(DarkSurfaceElevated)
-              .border(1.dp, DarkSurfaceBorder, CircleShape)
-          ) {
-            Icon(Icons.Default.Add, contentDescription = "Add Songs", tint = CyanNeon)
-          }
-        }
-      }
-    }
-
-    if (songs.isEmpty()) {
-      item {
-        Box(
-          modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 40.dp),
-          contentAlignment = Alignment.Center
-        ) {
-          Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("No songs in this playlist yet", color = TextMuted, fontSize = 14.sp)
-            Spacer(modifier = Modifier.height(10.dp))
-            Button(
-              onClick = { showAddSongsDialog = true },
-              colors = ButtonDefaults.buttonColors(containerColor = DarkSurfaceElevated)
-            ) {
-              Text("+ Add Songs From Library", color = CyanNeon)
-            }
-          }
-        }
-      }
-    }
-
-    items(songs) { song ->
-      Box(
-        modifier = Modifier
-          .fillMaxWidth()
-          .clip(RoundedCornerShape(12.dp))
-          .background(DarkSurfaceElevated)
-          .border(1.dp, DarkSurfaceBorder, RoundedCornerShape(12.dp))
-          .clickable { viewModel.playMusicQueue(songs, songs.indexOf(song), playlist) }
-          .padding(12.dp)
-      ) {
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.SpaceBetween,
-          verticalAlignment = Alignment.CenterVertically
-        ) {
-          Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.weight(1f)
-          ) {
-            Icon(Icons.Default.MusicNote, contentDescription = null, tint = CyanNeon, modifier = Modifier.size(18.dp))
-            Spacer(modifier = Modifier.width(10.dp))
-            Column {
-              Text(song.title, color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-              Text("${song.artist} • ${TimeUtils.formatSecondsToMmSs((song.durationMs / 1000).toInt())}", color = TextMuted, fontSize = 11.sp)
-            }
-          }
-
-          IconButton(onClick = { viewModel.removeSongFromPlaylist(playlist.id, song.id) }) {
-            Icon(Icons.Default.Close, contentDescription = "Remove", tint = TextMuted, modifier = Modifier.size(16.dp))
-          }
-        }
       }
     }
   }
 
-  if (showAddSongsDialog) {
-    AddSongsToPlaylistDialog(
-      allSongs = allSongs,
-      existingSongIds = songs.map { it.id }.toSet(),
-      onDismiss = { showAddSongsDialog = false },
-      onAddSong = { songId -> viewModel.addSongToPlaylist(playlist.id, songId) }
+  // --- DIALOGS ---
+
+  // 1. Full Now Playing Screen
+  if (showNowPlayingDialog && playerState.currentSong != null) {
+    NowPlayingScreenDialog(
+      playerState = playerState,
+      onDismiss = { showNowPlayingDialog = false },
+      onTogglePlayPause = { viewModel.toggleMusicPlayPause() },
+      onNext = { viewModel.nextMusicSong() },
+      onPrevious = { viewModel.previousMusicSong() },
+      onSeekTo = { viewModel.seekMusicTo(it) },
+      onToggleShuffle = { viewModel.toggleMusicShuffle() },
+      onToggleRepeat = { viewModel.toggleMusicRepeat() },
+      onToggleFavorite = { viewModel.toggleSongFavorite(it) },
+      onOpenEqualizer = { showEqualizerDialog = true },
+      onOpenSleepTimer = { showSleepTimerDialog = true },
+      onOpenLyrics = { showLyricsDialogForSong = playerState.currentSong },
+      onOpenQueue = { showQueueDialog = true },
+      onSelectSpeed = { viewModel.setMusicPlaybackSpeed(it) }
+    )
+  }
+
+  // 2. Equalizer Dialog
+  if (showEqualizerDialog) {
+    EqualizerDialog(onDismiss = { showEqualizerDialog = false })
+  }
+
+  // 3. Sleep Timer Dialog
+  if (showSleepTimerDialog) {
+    SleepTimerDialog(onDismiss = { showSleepTimerDialog = false })
+  }
+
+  // 4. Lyrics Dialog
+  if (showLyricsDialogForSong != null) {
+    LrcLyricsDialog(
+      song = showLyricsDialogForSong!!,
+      currentPositionMs = playerState.currentPositionMs,
+      onDismiss = { showLyricsDialogForSong = null }
+    )
+  }
+
+  // 5. Queue Bottom Sheet Dialog
+  if (showQueueDialog) {
+    QueueBottomSheetDialog(
+      playerState = playerState,
+      onDismiss = { showQueueDialog = false },
+      onSelectSong = { song, index ->
+        viewModel.playMusicQueue(playerState.queue, index)
+      },
+      onMoveItem = { from, to -> viewModel.moveQueueItem(from, to) },
+      onRemoveItem = { index -> viewModel.removeFromQueue(index) },
+      onClearQueue = { viewModel.clearMusicQueue() }
+    )
+  }
+
+  // 6. Create Mood Playlist Dialog
+  if (showCreateMoodDialog) {
+    CreateMoodPlaylistDialog(
+      onDismiss = { showCreateMoodDialog = false },
+      onCreate = { name, colorHex, icon ->
+        viewModel.createMoodPlaylist(name, colorHex, icon)
+        showCreateMoodDialog = false
+        Toast.makeText(context, "नया मूड '$name' बनाया गया!", Toast.LENGTH_SHORT).show()
+      }
+    )
+  }
+
+  // 7. Add To Mood Playlist Dialog
+  if (showAddToMoodDialogForSong != null) {
+    AddToMoodPlaylistDialog(
+      song = showAddToMoodDialogForSong!!,
+      playlists = allPlaylists,
+      songPlaylistsIds = songMoodPlaylistIds,
+      onDismiss = { showAddToMoodDialogForSong = null },
+      onToggleSongInPlaylist = { playlistId, add ->
+        if (add) {
+          viewModel.addSongToPlaylist(playlistId, showAddToMoodDialogForSong!!.id)
+          songMoodPlaylistIds = songMoodPlaylistIds + playlistId
+          Toast.makeText(context, "मूड में जोड़ा गया", Toast.LENGTH_SHORT).show()
+        } else {
+          viewModel.removeSongFromPlaylist(playlistId, showAddToMoodDialogForSong!!.id)
+          songMoodPlaylistIds = songMoodPlaylistIds - playlistId
+          Toast.makeText(context, "मूड से हटाया गया", Toast.LENGTH_SHORT).show()
+        }
+      },
+      onOpenCreateMood = {
+        showAddToMoodDialogForSong = null
+        showCreateMoodDialog = true
+      }
+    )
+  }
+
+  // 8. Folder Blacklist Dialog
+  if (showFolderBlacklistDialog) {
+    FolderBlacklistDialog(
+      onDismiss = { showFolderBlacklistDialog = false },
+      onRescanRequested = {
+        viewModel.scanDeviceMusic()
+        coroutineScope.launch { folderList = LocalMusicScanner.getFolders(context) }
+      }
     )
   }
 }
 
 // -------------------------------------------------------------
-// 4. ALL SONGS VIEW
+// FILTER CHIP COMPOSABLE
 // -------------------------------------------------------------
 @Composable
-private fun AllSongsView(
-  songs: List<SongEntity>,
-  playlists: List<PlaylistEntity>,
-  currentSongId: String?,
-  isPlaying: Boolean,
-  onPlaySong: (SongEntity) -> Unit,
-  onPlayAll: (List<SongEntity>) -> Unit,
-  onToggleFavorite: (SongEntity) -> Unit,
-  onAddSongToPlaylist: (Long, String) -> Unit
+private fun FilterChipItem(
+  label: String,
+  isSelected: Boolean,
+  icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+  iconTint: Color = CyanNeon,
+  onClick: () -> Unit
 ) {
-  var searchQuery by remember { mutableStateOf("") }
-  val filtered = remember(songs, searchQuery) {
-    if (searchQuery.isBlank()) songs
-    else songs.filter {
-      it.title.contains(searchQuery, ignoreCase = true) ||
-      it.artist.contains(searchQuery, ignoreCase = true) ||
-      it.album.contains(searchQuery, ignoreCase = true)
-    }
-  }
-
-  LazyColumn(
+  Box(
     modifier = Modifier
-      .fillMaxSize()
-      .padding(horizontal = 16.dp),
-    contentPadding = PaddingValues(top = 12.dp, bottom = 100.dp),
-    verticalArrangement = Arrangement.spacedBy(10.dp)
+      .clip(RoundedCornerShape(20.dp))
+      .background(if (isSelected) CyanNeon.copy(alpha = 0.2f) else DarkSurfaceElevated)
+      .border(1.dp, if (isSelected) CyanNeon else DarkSurfaceBorder, RoundedCornerShape(20.dp))
+      .clickable { onClick() }
+      .padding(horizontal = 14.dp, vertical = 7.dp)
   ) {
-    item {
-      // Search Bar
-      OutlinedTextField(
-        value = searchQuery,
-        onValueChange = { searchQuery = it },
-        placeholder = { Text("Search songs, artists, moods...", color = TextMuted) },
-        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = CyanNeon) },
-        colors = OutlinedTextFieldDefaults.colors(
-          focusedBorderColor = CyanNeon,
-          unfocusedBorderColor = DarkSurfaceBorder,
-          focusedTextColor = TextPrimary,
-          unfocusedTextColor = TextPrimary
-        ),
-        shape = RoundedCornerShape(14.dp),
-        modifier = Modifier.fillMaxWidth()
+    Row(verticalAlignment = Alignment.CenterVertically) {
+      if (icon != null) {
+        Icon(icon, contentDescription = null, tint = if (isSelected) iconTint else TextMuted, modifier = Modifier.size(16.dp))
+        Spacer(modifier = Modifier.width(6.dp))
+      }
+      Text(
+        text = label,
+        color = if (isSelected) TextPrimary else TextMuted,
+        fontSize = 12.sp,
+        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
       )
     }
+  }
+}
 
-    item {
-      Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+// -------------------------------------------------------------
+// TAB 1: SONGS LIST (WITH A-Z FAST SCROLLER & 3-DOT MENU)
+// -------------------------------------------------------------
+@Composable
+private fun SongsListTab(
+  songs: List<SongEntity>,
+  currentSongId: String?,
+  isPlaying: Boolean,
+  onPlaySong: (SongEntity, Int) -> Unit,
+  onPlayNext: (SongEntity) -> Unit,
+  onAddToQueue: (SongEntity) -> Unit,
+  onAddToMood: (SongEntity) -> Unit,
+  onToggleFavorite: (SongEntity) -> Unit,
+  onViewLyrics: (SongEntity) -> Unit,
+  onRequestPermission: () -> Unit
+) {
+  val listState = rememberLazyListState()
+  val coroutineScope = rememberCoroutineScope()
+
+  if (songs.isEmpty()) {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+      Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.padding(24.dp)
       ) {
-        Text("${filtered.size} SONGS AVAILABLE", color = CyanNeon, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        Icon(Icons.Default.MusicNote, contentDescription = null, tint = TextMuted, modifier = Modifier.size(54.dp))
+        Text("कोई गाना नहीं मिला", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+        Text(
+          text = "यदि आपके डिवाइस में गाने हैं, तो कृपया अनुमति दें और ऊपर रीस्कैन बटन दबाएं।",
+          color = TextMuted,
+          fontSize = 12.sp,
+          textAlign = TextAlign.Center
+        )
+        Button(
+          onClick = onRequestPermission,
+          colors = ButtonDefaults.buttonColors(containerColor = CyanNeon, contentColor = ObsidianCharcoal)
+        ) {
+          Text("स्टोरेज अनुमति दें (Grant Permission)")
+        }
+      }
+    }
+    return
+  }
 
-        if (filtered.isNotEmpty()) {
-          TextButton(onClick = { onPlayAll(filtered) }) {
-            Icon(Icons.Default.PlayArrow, contentDescription = null, tint = CyanNeon, modifier = Modifier.size(16.dp))
-            Spacer(modifier = Modifier.width(4.dp))
-            Text("Play All", color = CyanNeon, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+  // Fast scroll index letters
+  val alphabet = remember(songs) {
+    songs.map { it.title.firstOrNull()?.uppercaseChar() ?: '#' }.distinct()
+  }
+
+  Row(modifier = Modifier.fillMaxSize()) {
+    // Songs LazyColumn
+    LazyColumn(
+      state = listState,
+      modifier = Modifier.weight(1f).fillMaxHeight(),
+      contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+      verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+      itemsIndexed(songs, key = { _, s -> s.id }) { index, song ->
+        val isCurrent = song.id == currentSongId
+
+        var menuExpanded by remember { mutableStateOf(false) }
+
+        Row(
+          modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (isCurrent) CyanNeon.copy(alpha = 0.12f) else DarkSurfaceElevated)
+            .border(1.dp, if (isCurrent) CyanNeon.copy(alpha = 0.45f) else DarkSurfaceBorder, RoundedCornerShape(14.dp))
+            .clickable { onPlaySong(song, index) }
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          // Album Art thumbnail
+          Box(
+            modifier = Modifier
+              .size(44.dp)
+              .clip(RoundedCornerShape(8.dp))
+              .background(DarkSurfaceBorder),
+            contentAlignment = Alignment.Center
+          ) {
+            if (!song.albumArtUri.isNullOrBlank()) {
+              AsyncImage(
+                model = song.albumArtUri,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+              )
+            } else {
+              Icon(Icons.Default.MusicNote, contentDescription = null, tint = CyanNeon, modifier = Modifier.size(22.dp))
+            }
+          }
+
+          Spacer(modifier = Modifier.width(12.dp))
+
+          // Title & Artist
+          Column(modifier = Modifier.weight(1f)) {
+            Text(
+              text = song.title,
+              color = if (isCurrent) CyanNeon else TextPrimary,
+              fontSize = 14.sp,
+              fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+              text = "${song.artist} • ${TimeUtils.formatDuration(song.durationMs)}",
+              color = TextMuted,
+              fontSize = 12.sp,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis
+            )
+          }
+
+          // Favorite toggle
+          IconButton(
+            onClick = { onToggleFavorite(song) },
+            modifier = Modifier.size(34.dp)
+          ) {
+            Icon(
+              imageVector = if (song.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+              contentDescription = "Favorite",
+              tint = if (song.isFavorite) Color(0xFFEC4899) else TextMuted,
+              modifier = Modifier.size(18.dp)
+            )
+          }
+
+          // 3-dot dropdown menu
+          Box {
+            IconButton(
+              onClick = { menuExpanded = true },
+              modifier = Modifier.size(34.dp)
+            ) {
+              Icon(Icons.Default.MoreVert, contentDescription = "Menu", tint = TextMuted, modifier = Modifier.size(20.dp))
+            }
+
+            DropdownMenu(
+              expanded = menuExpanded,
+              onDismissRequest = { menuExpanded = false },
+              modifier = Modifier.background(DarkSurfaceElevated)
+            ) {
+              DropdownMenuItem(
+                text = { Text("अगला बजाएं (Play Next)") },
+                onClick = {
+                  menuExpanded = false
+                  onPlayNext(song)
+                }
+              )
+              DropdownMenuItem(
+                text = { Text("कतार में जोड़ें (Add to Queue)") },
+                onClick = {
+                  menuExpanded = false
+                  onAddToQueue(song)
+                }
+              )
+              DropdownMenuItem(
+                text = { Text("मूड प्लेलिस्ट में जोड़ें (Add to Mood)") },
+                onClick = {
+                  menuExpanded = false
+                  onAddToMood(song)
+                }
+              )
+              DropdownMenuItem(
+                text = { Text("लिरिक्स देखें (View Lyrics)") },
+                onClick = {
+                  menuExpanded = false
+                  onViewLyrics(song)
+                }
+              )
+            }
           }
         }
       }
     }
 
-    items(filtered) { song ->
-      var showAddToPlaylistMenu by remember { mutableStateOf(false) }
-      val isThisSongPlaying = song.id == currentSongId && isPlaying
-
-      Box(
+    // A-Z fast scroller column
+    if (alphabet.size > 5) {
+      Column(
         modifier = Modifier
-          .fillMaxWidth()
-          .clip(RoundedCornerShape(14.dp))
-          .background(if (song.id == currentSongId) CyanNeon.copy(alpha = 0.1f) else DarkSurfaceElevated)
-          .border(1.dp, if (song.id == currentSongId) CyanNeon else DarkSurfaceBorder, RoundedCornerShape(14.dp))
-          .clickable { onPlaySong(song) }
-          .padding(12.dp)
+          .fillMaxHeight()
+          .padding(vertical = 8.dp, horizontal = 2.dp),
+        verticalArrangement = Arrangement.SpaceBetween,
+        horizontalAlignment = Alignment.CenterHorizontally
       ) {
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.SpaceBetween,
-          verticalAlignment = Alignment.CenterVertically
-        ) {
-          Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.weight(1f)
-          ) {
-            Box(
-              modifier = Modifier
-                .size(38.dp)
-                .clip(CircleShape)
-                .background(if (isThisSongPlaying) CyanNeon else DarkSurface),
-              contentAlignment = Alignment.Center
-            ) {
-              Icon(
-                imageVector = if (isThisSongPlaying) Icons.Default.GraphicEq else Icons.Default.PlayArrow,
-                contentDescription = null,
-                tint = if (isThisSongPlaying) DarkBackground else CyanNeon,
-                modifier = Modifier.size(18.dp)
-              )
-            }
-
-            Spacer(modifier = Modifier.width(12.dp))
-
-            Column {
-              Text(
-                text = song.title,
-                color = TextPrimary,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-              )
-              Text(
-                text = "${song.artist} • ${TimeUtils.formatSecondsToMmSs((song.durationMs / 1000).toInt())}",
-                color = TextMuted,
-                fontSize = 11.sp,
-                maxLines = 1
-              )
-            }
-          }
-
-          Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = { onToggleFavorite(song) }) {
-              Icon(
-                imageVector = if (song.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                contentDescription = "Favorite",
-                tint = if (song.isFavorite) Color(0xFFFF4081) else TextMuted,
-                modifier = Modifier.size(18.dp)
-              )
-            }
-
-            Box {
-              IconButton(onClick = { showAddToPlaylistMenu = true }) {
-                Icon(Icons.Default.PlaylistAdd, contentDescription = "Add to Playlist", tint = TextSecondary, modifier = Modifier.size(20.dp))
-              }
-
-              DropdownMenu(
-                expanded = showAddToPlaylistMenu,
-                onDismissRequest = { showAddToPlaylistMenu = false },
-                modifier = Modifier.background(DarkSurfaceElevated)
-              ) {
-                Text(
-                  text = "Add to Playlist:",
-                  color = TextMuted,
-                  fontSize = 11.sp,
-                  modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                )
-                playlists.forEach { pl ->
-                  DropdownMenuItem(
-                    text = { Text(pl.name, color = TextPrimary) },
-                    onClick = {
-                      onAddSongToPlaylist(pl.id, song.id)
-                      showAddToPlaylistMenu = false
-                    }
-                  )
+        alphabet.forEach { char ->
+          Text(
+            text = char.toString(),
+            color = TextMuted,
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier
+              .clickable {
+                val targetIndex = songs.indexOfFirst {
+                  (it.title.firstOrNull()?.uppercaseChar() ?: '#') == char
+                }
+                if (targetIndex >= 0) {
+                  coroutineScope.launch { listState.scrollToItem(targetIndex) }
                 }
               }
-            }
-          }
+              .padding(horizontal = 2.dp)
+          )
         }
       }
     }
@@ -1039,139 +831,136 @@ private fun AllSongsView(
 }
 
 // -------------------------------------------------------------
-// 5. MOOD & TIME RULES VIEW
+// TAB 2: ALBUMS GRID
 // -------------------------------------------------------------
 @Composable
-private fun MoodRulesView(
-  rules: List<PlaylistRuleEntity>,
-  playlists: List<PlaylistEntity>,
-  onAddRuleClick: () -> Unit,
-  onDeleteRule: (Long) -> Unit,
-  onPlayRuleNow: () -> Unit
+private fun AlbumsGridTab(
+  allSongs: List<SongEntity>,
+  onPlayAlbum: (List<SongEntity>) -> Unit
 ) {
-  val playlistMap = remember(playlists) { playlists.associateBy { it.id } }
+  val albums = remember(allSongs) {
+    allSongs.groupBy { it.album }.toList().sortedBy { it.first.lowercase() }
+  }
+
+  if (albums.isEmpty()) {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+      Text("कोई एल्बम नहीं मिला", color = TextMuted)
+    }
+    return
+  }
+
+  LazyVerticalGrid(
+    columns = GridCells.Fixed(2),
+    contentPadding = PaddingValues(14.dp),
+    horizontalArrangement = Arrangement.spacedBy(12.dp),
+    verticalArrangement = Arrangement.spacedBy(12.dp),
+    modifier = Modifier.fillMaxSize()
+  ) {
+    items(albums) { (albumName, songs) ->
+      val firstCover = songs.firstOrNull { !it.albumArtUri.isNullOrBlank() }?.albumArtUri
+
+      Column(
+        modifier = Modifier
+          .clip(RoundedCornerShape(16.dp))
+          .background(DarkSurfaceElevated)
+          .border(1.dp, DarkSurfaceBorder, RoundedCornerShape(16.dp))
+          .clickable { onPlayAlbum(songs) }
+          .padding(10.dp)
+      ) {
+        Box(
+          modifier = Modifier
+            .fillMaxWidth()
+            .height(130.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(DarkSurfaceBorder),
+          contentAlignment = Alignment.Center
+        ) {
+          if (!firstCover.isNullOrBlank()) {
+            AsyncImage(
+              model = firstCover,
+              contentDescription = null,
+              contentScale = ContentScale.Crop,
+              modifier = Modifier.fillMaxSize()
+            )
+          } else {
+            Icon(Icons.Default.Album, contentDescription = null, tint = CyanNeon, modifier = Modifier.size(48.dp))
+          }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Text(
+          text = albumName,
+          color = TextPrimary,
+          fontSize = 14.sp,
+          fontWeight = FontWeight.SemiBold,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis
+        )
+        Text(
+          text = "${songs.size} गाने",
+          color = TextMuted,
+          fontSize = 12.sp
+        )
+      }
+    }
+  }
+}
+
+// -------------------------------------------------------------
+// TAB 3: ARTISTS LIST
+// -------------------------------------------------------------
+@Composable
+private fun ArtistsListTab(
+  allSongs: List<SongEntity>,
+  onPlayArtist: (List<SongEntity>) -> Unit
+) {
+  val artists = remember(allSongs) {
+    allSongs.groupBy { it.artist }.toList().sortedBy { it.first.lowercase() }
+  }
+
+  if (artists.isEmpty()) {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+      Text("कोई कलाकार नहीं मिला", color = TextMuted)
+    }
+    return
+  }
 
   LazyColumn(
-    modifier = Modifier
-      .fillMaxSize()
-      .padding(horizontal = 16.dp),
-    contentPadding = PaddingValues(top = 12.dp, bottom = 100.dp),
-    verticalArrangement = Arrangement.spacedBy(12.dp)
+    contentPadding = PaddingValues(14.dp),
+    verticalArrangement = Arrangement.spacedBy(8.dp),
+    modifier = Modifier.fillMaxSize()
   ) {
-    item {
-      Box(
-        modifier = Modifier
-          .fillMaxWidth()
-          .clip(RoundedCornerShape(18.dp))
-          .background(
-            Brush.linearGradient(listOf(Color(0xFF0D2538), Color(0xFF1B1B38)))
-          )
-          .border(1.dp, CyanNeon.copy(alpha = 0.4f), RoundedCornerShape(18.dp))
-          .padding(16.dp)
-      ) {
-        Column {
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-          ) {
-            Column {
-              Text("PLAYLIST + TIME + MOOD SYSTEM", color = CyanNeon, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-              Text("Automated Routine Music", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-            }
-            Button(
-              onClick = onPlayRuleNow,
-              colors = ButtonDefaults.buttonColors(containerColor = CyanNeon),
-              shape = RoundedCornerShape(10.dp)
-            ) {
-              Text("Play Current", color = DarkBackground, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-            }
-          }
-          Spacer(modifier = Modifier.height(8.dp))
-          Text(
-            text = "समय और मूड के अनुसार परिभाषित नियम स्वचालित रूप से सही समय पर सही संगीत चुनते हैं।",
-            color = TextSecondary,
-            fontSize = 12.sp
-          )
-        }
-      }
-    }
-
-    item {
+    items(artists) { (artistName, songs) ->
       Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-      ) {
-        Text("ACTIVE TIME RULES (${rules.size})", color = CyanNeon, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-        Button(
-          onClick = onAddRuleClick,
-          colors = ButtonDefaults.buttonColors(containerColor = VioletNeon.copy(alpha = 0.25f)),
-          shape = RoundedCornerShape(10.dp)
-        ) {
-          Icon(Icons.Default.Add, contentDescription = null, tint = VioletNeon, modifier = Modifier.size(16.dp))
-          Spacer(modifier = Modifier.width(4.dp))
-          Text("Add Rule", color = VioletNeon, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-        }
-      }
-    }
-
-    items(rules) { rule ->
-      val playlist = playlistMap[rule.playlistId]
-      val moodObj = MusicMood.fromString(rule.mood)
-
-      Box(
         modifier = Modifier
           .fillMaxWidth()
           .clip(RoundedCornerShape(14.dp))
           .background(DarkSurfaceElevated)
           .border(1.dp, DarkSurfaceBorder, RoundedCornerShape(14.dp))
-          .padding(14.dp)
+          .clickable { onPlayArtist(songs) }
+          .padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically
       ) {
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.SpaceBetween,
-          verticalAlignment = Alignment.CenterVertically
+        Box(
+          modifier = Modifier
+            .size(46.dp)
+            .clip(CircleShape)
+            .background(VioletNeon.copy(alpha = 0.2f)),
+          contentAlignment = Alignment.Center
         ) {
-          Column(modifier = Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-              Text(
-                text = "${TimeUtils.minutesTo12Hour(rule.startMinutes)} – ${TimeUtils.minutesTo12Hour(rule.endMinutes)}",
-                color = CyanNeon,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Bold
-              )
-              Spacer(modifier = Modifier.width(8.dp))
-              Box(
-                modifier = Modifier
-                  .clip(RoundedCornerShape(6.dp))
-                  .background(Color(android.graphics.Color.parseColor(moodObj.colorHex)).copy(alpha = 0.2f))
-                  .padding(horizontal = 6.dp, vertical = 2.dp)
-              ) {
-                Text(
-                  text = "${moodObj.emoji} ${moodObj.titleEn}",
-                  color = Color(android.graphics.Color.parseColor(moodObj.colorHex)),
-                  fontSize = 10.sp,
-                  fontWeight = FontWeight.Bold
-                )
-              }
-            }
+          Icon(Icons.Default.Person, contentDescription = null, tint = VioletNeon, modifier = Modifier.size(24.dp))
+        }
 
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-              text = "Playlist: ${playlist?.name ?: "All Songs"} • ${rule.situation}",
-              color = TextPrimary,
-              fontSize = 13.sp,
-              fontWeight = FontWeight.Medium
-            )
-            if (rule.linkedCategory != null) {
-              Text("Routine: ${rule.linkedCategory}", color = TextMuted, fontSize = 11.sp)
-            }
-          }
+        Spacer(modifier = Modifier.width(14.dp))
 
-          IconButton(onClick = { onDeleteRule(rule.id) }) {
-            Icon(Icons.Default.Delete, contentDescription = "Delete", tint = TextMuted, modifier = Modifier.size(18.dp))
-          }
+        Column(modifier = Modifier.weight(1f)) {
+          Text(artistName, color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+          Text("${songs.size} गाने", color = TextMuted, fontSize = 12.sp)
+        }
+
+        IconButton(onClick = { onPlayArtist(songs) }) {
+          Icon(Icons.Default.PlayArrow, contentDescription = "Play", tint = CyanNeon)
         }
       }
     }
@@ -1179,313 +968,230 @@ private fun MoodRulesView(
 }
 
 // -------------------------------------------------------------
-// 6. FAVORITES & RECENTLY PLAYED
+// TAB 4: MOOD PLAYLISTS (BLANK INITIALLY, USER CREATES MOODS)
 // -------------------------------------------------------------
 @Composable
-private fun FavoritesAndHistoryView(
-  favoriteSongs: List<SongEntity>,
-  recentlyPlayed: List<SongEntity>,
-  onPlaySong: (SongEntity) -> Unit,
-  onToggleFavorite: (SongEntity) -> Unit
+private fun MoodPlaylistsTab(
+  playlists: List<PlaylistEntity>,
+  allSongs: List<SongEntity>,
+  onPlayMood: (PlaylistEntity, Boolean) -> Unit,
+  onOpenCreateMood: () -> Unit,
+  onDeleteMood: (Long) -> Unit
 ) {
-  LazyColumn(
+  Column(
     modifier = Modifier
       .fillMaxSize()
-      .padding(horizontal = 16.dp),
-    contentPadding = PaddingValues(top = 12.dp, bottom = 100.dp),
-    verticalArrangement = Arrangement.spacedBy(12.dp)
-  ) {
-    item {
-      Text("FAVORITE TRACKS (${favoriteSongs.size})", color = Color(0xFFFF4081), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-    }
-
-    if (favoriteSongs.isEmpty()) {
-      item {
-        Text("No favorite songs yet. Tap the heart icon on any song.", color = TextMuted, fontSize = 12.sp)
-      }
-    }
-
-    items(favoriteSongs) { song ->
-      SongRowItem(song = song, onPlay = { onPlaySong(song) }, onToggleFav = { onToggleFavorite(song) })
-    }
-
-    item {
-      Spacer(modifier = Modifier.height(10.dp))
-      Text("RECENTLY PLAYED (${recentlyPlayed.size})", color = CyanNeon, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-    }
-
-    items(recentlyPlayed) { song ->
-      SongRowItem(song = song, onPlay = { onPlaySong(song) }, onToggleFav = { onToggleFavorite(song) })
-    }
-  }
-}
-
-@Composable
-private fun SongRowItem(
-  song: SongEntity,
-  onPlay: () -> Unit,
-  onToggleFav: () -> Unit
-) {
-  Box(
-    modifier = Modifier
-      .fillMaxWidth()
-      .clip(RoundedCornerShape(12.dp))
-      .background(DarkSurfaceElevated)
-      .border(1.dp, DarkSurfaceBorder, RoundedCornerShape(12.dp))
-      .clickable { onPlay() }
-      .padding(12.dp)
+      .padding(14.dp)
   ) {
     Row(
       modifier = Modifier.fillMaxWidth(),
       horizontalArrangement = Arrangement.SpaceBetween,
       verticalAlignment = Alignment.CenterVertically
     ) {
-      Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-        Icon(Icons.Default.MusicNote, contentDescription = null, tint = CyanNeon, modifier = Modifier.size(16.dp))
-        Spacer(modifier = Modifier.width(10.dp))
-        Column {
-          Text(song.title, color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-          Text("${song.artist} • ${TimeUtils.formatSecondsToMmSs((song.durationMs / 1000).toInt())}", color = TextMuted, fontSize = 11.sp)
-        }
+      Column {
+        Text("मूड प्लेलिस्ट्स (Moods)", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Text("अपने अनुसार मूड बनाएँ और गाने जोड़ें", color = TextMuted, fontSize = 12.sp)
       }
 
-      IconButton(onClick = onToggleFav) {
-        Icon(
-          imageVector = if (song.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-          contentDescription = null,
-          tint = if (song.isFavorite) Color(0xFFFF4081) else TextMuted,
-          modifier = Modifier.size(18.dp)
-        )
+      Button(
+        onClick = onOpenCreateMood,
+        colors = ButtonDefaults.buttonColors(containerColor = CyanNeon, contentColor = ObsidianCharcoal),
+        shape = RoundedCornerShape(12.dp)
+      ) {
+        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+        Spacer(modifier = Modifier.width(6.dp))
+        Text("+ नया मूड", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+      }
+    }
+
+    Spacer(modifier = Modifier.height(14.dp))
+
+    // Requirement: Starts completely empty with friendly prompt
+    if (playlists.isEmpty()) {
+      Box(
+        modifier = Modifier
+          .fillMaxSize()
+          .clip(RoundedCornerShape(20.dp))
+          .background(DarkSurfaceElevated)
+          .border(1.dp, DarkSurfaceBorder, RoundedCornerShape(20.dp))
+          .padding(24.dp),
+        contentAlignment = Alignment.Center
+      ) {
+        Column(
+          horizontalAlignment = Alignment.CenterHorizontally,
+          verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+          Text("🎨", fontSize = 48.sp)
+          Text("अभी कोई मूड प्लेलिस्ट नहीं है", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+          Text(
+            text = "कोई डेमो या प्री-सीडेड मूड नहीं रखा गया है। आप खुद अपने मूड्स (जैसे: जिम, रात, ड्राइविंग, फोकस) नाम और रंग चुनकर बनाएँ।",
+            color = TextMuted,
+            fontSize = 13.sp,
+            textAlign = TextAlign.Center,
+            lineHeight = 18.sp
+          )
+          Spacer(modifier = Modifier.height(6.dp))
+          Button(
+            onClick = onOpenCreateMood,
+            colors = ButtonDefaults.buttonColors(containerColor = CyanNeon, contentColor = ObsidianCharcoal),
+            shape = RoundedCornerShape(12.dp)
+          ) {
+            Text("पहला मूड प्लेलिस्ट बनाएँ")
+          }
+        }
+      }
+    } else {
+      LazyVerticalGrid(
+        columns = GridCells.Fixed(2),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        modifier = Modifier.fillMaxSize()
+      ) {
+        items(playlists) { playlist ->
+          val moodColor = try { Color(android.graphics.Color.parseColor(playlist.colorHex)) } catch (_: Exception) { CyanNeon }
+
+          Column(
+            modifier = Modifier
+              .clip(RoundedCornerShape(18.dp))
+              .background(DarkSurfaceElevated)
+              .border(1.5.dp, moodColor.copy(alpha = 0.6f), RoundedCornerShape(18.dp))
+              .padding(14.dp)
+          ) {
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.SpaceBetween,
+              verticalAlignment = Alignment.CenterVertically
+            ) {
+              Text(playlist.icon, fontSize = 28.sp)
+              IconButton(
+                onClick = { onDeleteMood(playlist.id) },
+                modifier = Modifier.size(28.dp)
+              ) {
+                Icon(Icons.Default.Delete, contentDescription = "Delete", tint = TextMuted, modifier = Modifier.size(16.dp))
+              }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Text(
+              text = playlist.name,
+              color = TextPrimary,
+              fontSize = 16.sp,
+              fontWeight = FontWeight.Bold,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis
+            )
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Play & Shuffle buttons
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+              Button(
+                onClick = { onPlayMood(playlist, false) },
+                colors = ButtonDefaults.buttonColors(containerColor = moodColor, contentColor = ObsidianCharcoal),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.weight(1f),
+                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
+              ) {
+                Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Play", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+              }
+
+              OutlinedButton(
+                onClick = { onPlayMood(playlist, true) },
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.weight(1f),
+                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
+              ) {
+                Icon(Icons.Default.Shuffle, contentDescription = null, tint = moodColor, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Mix", fontSize = 12.sp, color = moodColor)
+              }
+            }
+          }
+        }
       }
     }
   }
 }
 
 // -------------------------------------------------------------
-// DIALOGS: CREATE PLAYLIST, ADD RULE, ADD SONGS PICKER
+// TAB 5: FOLDERS TAB
 // -------------------------------------------------------------
 @Composable
-private fun CreatePlaylistDialog(
-  onDismiss: () -> Unit,
-  onCreate: (String, String, String) -> Unit
+private fun FoldersTab(
+  folders: List<Pair<String, Int>>,
+  onOpenFolderBlacklist: () -> Unit
 ) {
-  var name by remember { mutableStateOf("") }
-  var description by remember { mutableStateOf("") }
-  var selectedColor by remember { mutableStateOf("#00F0FF") }
-  val colors = listOf("#00F0FF", "#F59E0B", "#8B5CF6", "#10B981", "#EC4899", "#6366F1", "#F97316")
-
-  AlertDialog(
-    onDismissRequest = onDismiss,
-    title = { Text("Create New Playlist", color = TextPrimary, fontWeight = FontWeight.Bold) },
-    text = {
-      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        OutlinedTextField(
-          value = name,
-          onValueChange = { name = it },
-          label = { Text("Playlist Name (e.g. Travel, Gym, Focus)") },
-          colors = OutlinedTextFieldDefaults.colors(
-            focusedBorderColor = CyanNeon,
-            unfocusedBorderColor = DarkSurfaceBorder,
-            focusedTextColor = TextPrimary,
-            unfocusedTextColor = TextPrimary
-          ),
-          modifier = Modifier.fillMaxWidth()
-        )
-
-        OutlinedTextField(
-          value = description,
-          onValueChange = { description = it },
-          label = { Text("Description (Optional)") },
-          colors = OutlinedTextFieldDefaults.colors(
-            focusedBorderColor = CyanNeon,
-            unfocusedBorderColor = DarkSurfaceBorder,
-            focusedTextColor = TextPrimary,
-            unfocusedTextColor = TextPrimary
-          ),
-          modifier = Modifier.fillMaxWidth()
-        )
-
-        Text("Select Accent Color", color = TextSecondary, fontSize = 12.sp)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-          colors.forEach { hex ->
-            Box(
-              modifier = Modifier
-                .size(30.dp)
-                .clip(CircleShape)
-                .background(Color(android.graphics.Color.parseColor(hex)))
-                .border(
-                  2.dp,
-                  if (selectedColor == hex) Color.White else Color.Transparent,
-                  CircleShape
-                )
-                .clickable { selectedColor = hex }
-            )
-          }
-        }
+  Column(
+    modifier = Modifier
+      .fillMaxSize()
+      .padding(14.dp)
+  ) {
+    Row(
+      modifier = Modifier.fillMaxWidth(),
+      horizontalArrangement = Arrangement.SpaceBetween,
+      verticalAlignment = Alignment.CenterVertically
+    ) {
+      Column {
+        Text("डिवाइस फ़ोल्डर्स", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Text("फ़ोल्डर के अनुसार म्यूजिक ब्राउज़ करें", color = TextMuted, fontSize = 12.sp)
       }
-    },
-    confirmButton = {
-      Button(
-        onClick = { if (name.isNotBlank()) onCreate(name, description, selectedColor) },
-        colors = ButtonDefaults.buttonColors(containerColor = CyanNeon)
+
+      OutlinedButton(
+        onClick = onOpenFolderBlacklist,
+        shape = RoundedCornerShape(10.dp)
       ) {
-        Text("Create", color = DarkBackground, fontWeight = FontWeight.Bold)
+        Icon(Icons.Default.FolderOff, contentDescription = null, tint = Color(0xFFF43F5E), modifier = Modifier.size(16.dp))
+        Spacer(modifier = Modifier.width(6.dp))
+        Text("ब्लैकलिस्ट सेटिंग्स", color = TextPrimary, fontSize = 12.sp)
       }
-    },
-    dismissButton = {
-      TextButton(onClick = onDismiss) {
-        Text("Cancel", color = TextMuted)
+    }
+
+    Spacer(modifier = Modifier.height(14.dp))
+
+    if (folders.isEmpty()) {
+      Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Text("कोई फ़ोल्डर नहीं मिला", color = TextMuted)
       }
-    },
-    containerColor = DarkSurfaceElevated
-  )
-}
-
-@Composable
-private fun AddPlaylistRuleDialog(
-  playlists: List<PlaylistEntity>,
-  onDismiss: () -> Unit,
-  onAdd: (PlaylistRuleEntity) -> Unit
-) {
-  var selectedPlaylistId by remember { mutableStateOf(playlists.firstOrNull()?.id ?: 1L) }
-  var startHour by remember { mutableIntStateOf(6) }
-  var endHour by remember { mutableIntStateOf(7) }
-  var selectedMood by remember { mutableStateOf(MusicMood.CALM) }
-  var situation by remember { mutableStateOf("Morning Routine") }
-
-  AlertDialog(
-    onDismissRequest = onDismiss,
-    title = { Text("Add Time + Mood Rule", color = TextPrimary, fontWeight = FontWeight.Bold) },
-    text = {
-      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("Select Playlist", color = TextSecondary, fontSize = 12.sp)
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-          items(playlists) { pl ->
-            val isSel = pl.id == selectedPlaylistId
-            Box(
-              modifier = Modifier
-                .clip(RoundedCornerShape(8.dp))
-                .background(if (isSel) CyanNeon.copy(alpha = 0.2f) else DarkSurface)
-                .border(1.dp, if (isSel) CyanNeon else DarkSurfaceBorder, RoundedCornerShape(8.dp))
-                .clickable { selectedPlaylistId = pl.id }
-                .padding(horizontal = 10.dp, vertical = 6.dp)
-            ) {
-              Text(pl.name, color = if (isSel) CyanNeon else TextSecondary, fontSize = 12.sp)
-            }
-          }
-        }
-
-        Text("Select Mood", color = TextSecondary, fontSize = 12.sp)
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-          items(MusicMood.entries) { m ->
-            val isSel = m == selectedMood
-            Box(
-              modifier = Modifier
-                .clip(RoundedCornerShape(8.dp))
-                .background(if (isSel) CyanNeon.copy(alpha = 0.2f) else DarkSurface)
-                .border(1.dp, if (isSel) CyanNeon else DarkSurfaceBorder, RoundedCornerShape(8.dp))
-                .clickable { selectedMood = m }
-                .padding(horizontal = 8.dp, vertical = 6.dp)
-            ) {
-              Text("${m.emoji} ${m.titleEn}", color = if (isSel) CyanNeon else TextSecondary, fontSize = 11.sp)
-            }
-          }
-        }
-
-        OutlinedTextField(
-          value = situation,
-          onValueChange = { situation = it },
-          label = { Text("Situation / Activity Label") },
-          colors = OutlinedTextFieldDefaults.colors(
-            focusedBorderColor = CyanNeon,
-            unfocusedBorderColor = DarkSurfaceBorder,
-            focusedTextColor = TextPrimary,
-            unfocusedTextColor = TextPrimary
-          ),
-          modifier = Modifier.fillMaxWidth()
-        )
-      }
-    },
-    confirmButton = {
-      Button(
-        onClick = {
-          onAdd(
-            PlaylistRuleEntity(
-              playlistId = selectedPlaylistId,
-              startMinutes = startHour * 60,
-              endMinutes = endHour * 60,
-              mood = selectedMood.name,
-              situation = situation.ifBlank { "Custom Rule" },
-              autoPlay = false
-            )
-          )
-        },
-        colors = ButtonDefaults.buttonColors(containerColor = CyanNeon)
+    } else {
+      LazyColumn(
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxSize()
       ) {
-        Text("Save Rule", color = DarkBackground, fontWeight = FontWeight.Bold)
-      }
-    },
-    dismissButton = {
-      TextButton(onClick = onDismiss) {
-        Text("Cancel", color = TextMuted)
-      }
-    },
-    containerColor = DarkSurfaceElevated
-  )
-}
-
-@Composable
-private fun AddSongsToPlaylistDialog(
-  allSongs: List<SongEntity>,
-  existingSongIds: Set<String>,
-  onDismiss: () -> Unit,
-  onAddSong: (String) -> Unit
-) {
-  val available = allSongs.filter { it.id !in existingSongIds }
-
-  AlertDialog(
-    onDismissRequest = onDismiss,
-    title = { Text("Add Songs to Playlist", color = TextPrimary, fontWeight = FontWeight.Bold) },
-    text = {
-      if (available.isEmpty()) {
-        Text("All available songs are already in this playlist!", color = TextMuted)
-      } else {
-        LazyColumn(
-          modifier = Modifier.height(300.dp),
-          verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-          items(available) { song ->
+        items(folders) { (folderName, count) ->
+          Row(
+            modifier = Modifier
+              .fillMaxWidth()
+              .clip(RoundedCornerShape(14.dp))
+              .background(DarkSurfaceElevated)
+              .border(1.dp, DarkSurfaceBorder, RoundedCornerShape(14.dp))
+              .padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+          ) {
             Box(
               modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(8.dp))
-                .background(DarkSurface)
-                .clickable {
-                  onAddSong(song.id)
-                }
-                .padding(10.dp)
+                .size(42.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(GoldBrass.copy(alpha = 0.2f)),
+              contentAlignment = Alignment.Center
             ) {
-              Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-              ) {
-                Column(modifier = Modifier.weight(1f)) {
-                  Text(song.title, color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-                  Text(song.artist, color = TextMuted, fontSize = 10.sp)
-                }
-                Icon(Icons.Default.Add, contentDescription = null, tint = CyanNeon, modifier = Modifier.size(18.dp))
-              }
+              Icon(Icons.Default.Folder, contentDescription = null, tint = GoldBrass, modifier = Modifier.size(24.dp))
+            }
+
+            Spacer(modifier = Modifier.width(14.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+              Text(folderName, color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+              Text("$count संगीत ट्रैक्स", color = TextMuted, fontSize = 12.sp)
             }
           }
         }
       }
-    },
-    confirmButton = {
-      Button(onClick = onDismiss, colors = ButtonDefaults.buttonColors(containerColor = CyanNeon)) {
-        Text("Done", color = DarkBackground, fontWeight = FontWeight.Bold)
-      }
-    },
-    containerColor = DarkSurfaceElevated
-  )
+    }
+  }
 }

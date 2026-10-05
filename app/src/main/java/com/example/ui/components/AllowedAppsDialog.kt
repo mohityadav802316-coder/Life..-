@@ -90,6 +90,7 @@ fun AllowedAppsDialog(
   var installedApps by remember { mutableStateOf<List<InstalledAppItem>>(emptyList()) }
   var allowedSet by remember { mutableStateOf(FocusModeManager.getAllowedPackages(context).toMutableSet()) }
   var isLoading by remember { mutableStateOf(true) }
+  val isStrictLock = remember { FocusModeManager.isStrictLockActive(context) }
 
   val corePackages = remember { FocusModeManager.getCoreWhitelistedPackages(context) }
 
@@ -156,10 +157,10 @@ fun AllowedAppsDialog(
               modifier = Modifier
                 .size(36.dp)
                 .clip(CircleShape)
-                .background(GoldBrass.copy(alpha = 0.2f)),
+                .background(if (isStrictLock) Color(0xFFEF4444).copy(alpha = 0.2f) else GoldBrass.copy(alpha = 0.2f)),
               contentAlignment = Alignment.Center
             ) {
-              Icon(Icons.Default.Shield, contentDescription = null, tint = GoldBrass, modifier = Modifier.size(20.dp))
+              Icon(Icons.Default.Shield, contentDescription = null, tint = if (isStrictLock) Color(0xFFEF4444) else GoldBrass, modifier = Modifier.size(20.dp))
             }
             Spacer(modifier = Modifier.width(10.dp))
             Column {
@@ -170,8 +171,8 @@ fun AllowedAppsDialog(
                 fontWeight = FontWeight.Bold
               )
               Text(
-                text = "${allowedSet.size} ऐप्स फोकस सत्र में चालू रहेंगे",
-                color = WarmParchment,
+                text = if (isStrictLock) "🔒 लॉक के दौरान संपादन बंद है" else "${allowedSet.size} ऐप्स फोकस सत्र में चालू रहेंगे",
+                color = if (isStrictLock) Color(0xFFFF6B6B) else WarmParchment,
                 fontSize = 12.sp
               )
             }
@@ -179,6 +180,27 @@ fun AllowedAppsDialog(
           IconButton(onClick = onDismiss) {
             Icon(Icons.Default.Close, contentDescription = "Close", tint = WarmMuted)
           }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        if (isStrictLock) {
+          Box(
+            modifier = Modifier
+              .fillMaxWidth()
+              .clip(RoundedCornerShape(10.dp))
+              .background(Color(0xFF3B1515))
+              .border(1.dp, Color(0xFFEF4444).copy(alpha = 0.6f), RoundedCornerShape(10.dp))
+              .padding(10.dp)
+          ) {
+            Text(
+              text = "🔒 सख्त सुरक्षा लॉक सक्रिय है। सुरक्षा नियमों के अनुसार लॉक के दौरान अनुमत ऐप्स में कोई बदलाव नहीं किया जा सकता।",
+              color = Color(0xFFFFB4AB),
+              fontSize = 11.sp,
+              lineHeight = 15.sp
+            )
+          }
+          Spacer(modifier = Modifier.height(10.dp))
         }
 
         Spacer(modifier = Modifier.height(14.dp))
@@ -322,6 +344,7 @@ fun AllowedAppsDialog(
                   } else {
                     Switch(
                       checked = isChecked,
+                      enabled = !isStrictLock,
                       onCheckedChange = { checked ->
                         val updated = allowedSet.toMutableSet()
                         if (checked) {
@@ -354,7 +377,11 @@ fun AllowedAppsDialog(
             onSave(allowedSet)
             onDismiss()
           },
-          colors = ButtonDefaults.buttonColors(containerColor = GoldBrass),
+          enabled = !isStrictLock,
+          colors = ButtonDefaults.buttonColors(
+            containerColor = GoldBrass,
+            disabledContainerColor = ObsidianElevated
+          ),
           shape = RoundedCornerShape(14.dp),
           modifier = Modifier
             .fillMaxWidth()
@@ -362,8 +389,8 @@ fun AllowedAppsDialog(
             .testTag("save_allowed_apps_button")
         ) {
           Text(
-            text = "अनुमत ऐप्स सहेजें (${allowedSet.size})",
-            color = ObsidianCharcoal,
+            text = if (isStrictLock) "🚫 सख्त लॉक में बदलाव वर्जित" else "अनुमत ऐप्स सहेजें (${allowedSet.size})",
+            color = if (isStrictLock) WarmMuted else ObsidianCharcoal,
             fontWeight = FontWeight.Bold,
             fontSize = 14.sp
           )

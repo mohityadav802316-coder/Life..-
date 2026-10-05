@@ -80,9 +80,13 @@ data class DayTaskEntity(
   val priority: String = "NORMAL" // "NORMAL", "IMPORTANT", "HIGH"
 )
 
-@Entity(tableName = "routine_templates")
+@Entity(
+  tableName = "routine_templates",
+  indices = [Index(name = "index_routine_templates_activityKey", value = ["activityKey"], unique = true)]
+)
 data class RoutineTemplateEntity(
   @PrimaryKey(autoGenerate = true) val id: Long = 0,
+  val activityKey: String = "",
   val name: String,
   val timeMinutes: Int, // Minutes from midnight
   val category: String = "Routine",

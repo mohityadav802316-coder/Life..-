@@ -81,7 +81,7 @@ class WakeUpAlarmReceiver : BroadcastReceiver() {
   }
 
   private fun handleFocusModeDeactivate(context: Context) {
-    com.example.focus.FocusModeManager.deactivateFocusMode(context)
+    com.example.focus.FocusModeManager.deactivateFocusMode(context, force = true)
   }
 
   private fun handleTimetableReminder(context: Context, intent: Intent) {
@@ -139,18 +139,27 @@ class WakeUpAlarmReceiver : BroadcastReceiver() {
       )
     }
 
-    val notificationId = (AlarmScheduler.NOTIFICATION_ID_TIMETABLE_BASE + (templateId % 50000)).toInt()
+    val activityKey = intent.getStringExtra(AlarmScheduler.EXTRA_ACTIVITY_KEY) ?: ""
+    val notificationId = if (activityKey.isNotBlank()) {
+      AlarmScheduler.getStableRequestCodeForActivityKey(activityKey, templateId)
+    } else {
+      (AlarmScheduler.NOTIFICATION_ID_TIMETABLE_BASE + (templateId % 50000)).toInt()
+    }
     notificationManager.notify(notificationId, builder.build())
-    Log.d("WakeUpAlarmReceiver", "Dispatched timetable notification for $name at $timeFormatted")
+    Log.d("WakeUpAlarmReceiver", "Dispatched timetable notification for $name [key=$activityKey] at $timeFormatted")
 
     // Daily recurring reschedule for next occurrence
-    if (templateId > 0L) {
+    if (activityKey.isNotBlank() || templateId > 0L) {
       CoroutineScope(Dispatchers.IO).launch {
         try {
           val db = LifeTrackerDatabase.getDatabase(context)
           val settings = db.userSettingsDao().getSettingsSync()
           val smartReminder = settings?.smartReminderMinutes ?: 0
-          val template = db.routineDao().getRoutineTemplateById(templateId)
+          val template = if (activityKey.isNotBlank()) {
+            db.routineDao().getRoutineTemplateByActivityKey(activityKey)
+          } else {
+            db.routineDao().getRoutineTemplateById(templateId)
+          }
           if (template != null && template.isActive) {
             AlarmScheduler.scheduleTimetableAlarm(context, template, smartReminder)
           }
@@ -212,9 +221,14 @@ class WakeUpAlarmReceiver : BroadcastReceiver() {
       .setDefaults(NotificationCompat.DEFAULT_ALL)
       .setContentIntent(contentPendingIntent)
 
-    val notificationId = (AlarmScheduler.NOTIFICATION_ID_PRE_REMINDER_BASE + (templateId % 50000)).toInt()
+    val activityKey = intent.getStringExtra(AlarmScheduler.EXTRA_ACTIVITY_KEY) ?: ""
+    val notificationId = if (activityKey.isNotBlank()) {
+      AlarmScheduler.getStablePreReminderRequestCodeForActivityKey(activityKey, templateId)
+    } else {
+      (AlarmScheduler.NOTIFICATION_ID_PRE_REMINDER_BASE + (templateId % 50000)).toInt()
+    }
     notificationManager.notify(notificationId, builder.build())
-    Log.d("WakeUpAlarmReceiver", "Dispatched smart pre-reminder notification for $name ($preMinutes min before)")
+    Log.d("WakeUpAlarmReceiver", "Dispatched smart pre-reminder notification for $name ($preMinutes min before) [key=$activityKey]")
   }
 
   private fun handleAlarmTrigger(context: Context, intent: Intent) {
@@ -331,6 +345,9 @@ class WakeUpAlarmReceiver : BroadcastReceiver() {
 
         // Restore OLED Black Screen Mode & Floating Control if configured
         com.example.blackscreen.BlackScreenManager.onBootCompleted(context)
+
+        // Reschedule automatic daily backup
+        com.example.backup.DailyBackupWorker.rescheduleAfterBoot(context)
       } catch (e: Exception) {
         Log.e("WakeUpAlarmReceiver", "Failed to reschedule alarms after boot", e)
       }

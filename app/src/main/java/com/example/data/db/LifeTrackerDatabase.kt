@@ -9,6 +9,10 @@ import com.example.data.model.DailyChallengeEntity
 import com.example.data.model.DailyNoteEntity
 import com.example.data.model.DailySnapshotEntity
 import com.example.data.model.DayTaskEntity
+import com.example.data.model.ExpenseCategoryEntity
+import com.example.data.model.ExpenseEntity
+import com.example.data.model.ExpenseQuickChipEntity
+import com.example.data.model.RecurringExpenseEntity
 import com.example.data.model.GoalEntity
 import com.example.data.model.JournalistConverters
 import com.example.data.model.JournalistEntryEntity
@@ -23,7 +27,9 @@ import com.example.data.model.RoutineTemplateEntity
 import com.example.data.model.SongEntity
 import com.example.data.model.ShortContentRecordEntity
 import com.example.data.model.ShortContentDailySummaryEntity
+import com.example.data.model.StrictLockEventEntity
 import com.example.data.model.UserSettingsEntity
+import com.example.util.RoutineUtils
 
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
@@ -46,9 +52,14 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     PlaylistRuleEntity::class,
     DailyChallengeEntity::class,
     ShortContentRecordEntity::class,
-    ShortContentDailySummaryEntity::class
+    ShortContentDailySummaryEntity::class,
+    ExpenseEntity::class,
+    ExpenseCategoryEntity::class,
+    ExpenseQuickChipEntity::class,
+    RecurringExpenseEntity::class,
+    StrictLockEventEntity::class
   ],
-  version = 14,
+  version = 18,
   exportSchema = false
 )
 @TypeConverters(LifeTrackerConverters::class, JournalistConverters::class)
@@ -66,6 +77,8 @@ abstract class LifeTrackerDatabase : RoomDatabase() {
   abstract fun musicDao(): MusicDao
   abstract fun dailyChallengeDao(): DailyChallengeDao
   abstract fun shortContentDao(): ShortContentDao
+  abstract fun expenseDao(): ExpenseDao
+  abstract fun strictLockDao(): StrictLockDao
 
   companion object {
     @Volatile
@@ -363,6 +376,208 @@ abstract class LifeTrackerDatabase : RoomDatabase() {
       }
     }
 
+    val MIGRATION_14_15 = object : Migration(14, 15) {
+      override fun migrate(db: SupportSQLiteDatabase) {
+        // 1. High-performance database query indices matching @Entity declarations
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_day_tasks_date ON day_tasks(date)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_day_tasks_templateId ON day_tasks(templateId)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_reflections_date ON reflections(date)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_meditation_sessions_date ON meditation_sessions(date)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_journalist_entries_date ON journalist_entries(date)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_journalist_entries_personId ON journalist_entries(personId)")
+
+        // 2. Add activityKey column with empty string default if not already present
+        try {
+          db.execSQL("ALTER TABLE routine_templates ADD COLUMN activityKey TEXT NOT NULL DEFAULT ''")
+        } catch (_: Exception) {
+          // Column already added
+        }
+
+        // 3. Backfill and deduplicate existing routine templates BEFORE creating unique index
+        val cursor = db.query(
+          "SELECT id, name, timeMinutes, category, notes, orderIndex, daysMask, isActive, priority FROM routine_templates ORDER BY id ASC"
+        )
+        data class MigrationRoutineRow(
+          val id: Long,
+          val name: String,
+          val timeMinutes: Int,
+          val category: String,
+          val notes: String,
+          val orderIndex: Int,
+          val daysMask: Int,
+          val isActive: Boolean,
+          val priority: String
+        )
+        val existingRows = mutableListOf<MigrationRoutineRow>()
+        while (cursor.moveToNext()) {
+          existingRows.add(
+            MigrationRoutineRow(
+              id = cursor.getLong(0),
+              name = cursor.getString(1) ?: "",
+              timeMinutes = cursor.getInt(2),
+              category = cursor.getString(3) ?: "",
+              notes = cursor.getString(4) ?: "",
+              orderIndex = cursor.getInt(5),
+              daysMask = cursor.getInt(6),
+              isActive = cursor.getInt(7) != 0,
+              priority = cursor.getString(8) ?: "NORMAL"
+            )
+          )
+        }
+        cursor.close()
+
+        // Group rows by canonical activity key
+        val groups = mutableMapOf<String, MutableList<MigrationRoutineRow>>()
+        for (row in existingRows) {
+          val key = RoutineUtils.resolveActivityKey(row.name).ifBlank { "custom_${row.id}" }
+          groups.getOrPut(key) { mutableListOf() }.add(row)
+        }
+
+        // Resolve each group: keep user custom/active row, re-link day_tasks, delete duplicate
+        val usedKeys = mutableSetOf<String>()
+        for ((key, rowList) in groups) {
+          if (rowList.size == 1) {
+            val row = rowList.first()
+            val finalKey = if (usedKeys.contains(key)) "${key}_${row.id}" else key
+            usedKeys.add(finalKey)
+            db.execSQL("UPDATE routine_templates SET activityKey = ? WHERE id = ?", arrayOf(finalKey, row.id))
+          } else {
+            // Pick survivor: prefer active row, custom notes/time, or highest id (user-customized row)
+            val survivor = rowList.maxByOrNull { r ->
+              var score = 0
+              if (r.isActive) score += 20
+              if (r.notes.isNotBlank()) score += 10
+              if (r.id > 14) score += 5 // user custom row created after default 14
+              score
+            } ?: rowList.last()
+
+            val finalKey = if (usedKeys.contains(key)) "${key}_${survivor.id}" else key
+            usedKeys.add(finalKey)
+            db.execSQL("UPDATE routine_templates SET activityKey = ? WHERE id = ?", arrayOf(finalKey, survivor.id))
+
+            // Re-link all day_tasks from duplicates to the surviving template row, preserving history
+            for (dup in rowList) {
+              if (dup.id != survivor.id) {
+                db.execSQL(
+                  "UPDATE day_tasks SET templateId = ? WHERE templateId = ?",
+                  arrayOf(survivor.id, dup.id)
+                )
+                db.execSQL("DELETE FROM routine_templates WHERE id = ?", arrayOf(dup.id))
+              }
+            }
+          }
+        }
+
+        // 4. Ensure any remaining blank activityKey has a safe unique identifier
+        db.execSQL("UPDATE routine_templates SET activityKey = 'custom_' || id WHERE activityKey IS NULL OR activityKey = ''")
+
+        // 5. Create UNIQUE index on routine_templates(activityKey) matching Room exact name
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_routine_templates_activityKey ON routine_templates(activityKey)")
+      }
+    }
+
+    val MIGRATION_13_15 = object : Migration(13, 15) {
+      override fun migrate(db: SupportSQLiteDatabase) {
+        MIGRATION_13_14.migrate(db)
+        MIGRATION_14_15.migrate(db)
+      }
+    }
+
+    val MIGRATION_15_16 = object : Migration(15, 16) {
+      override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("""
+          CREATE TABLE IF NOT EXISTS expenses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+            amount REAL NOT NULL,
+            note TEXT NOT NULL,
+            category TEXT NOT NULL,
+            categoryEmoji TEXT NOT NULL,
+            categoryColorHex TEXT NOT NULL,
+            date TEXT NOT NULL,
+            time TEXT NOT NULL,
+            timestamp INTEGER NOT NULL,
+            mood TEXT
+          )
+        """.trimIndent())
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_date ON expenses (date)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_category ON expenses (category)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_timestamp ON expenses (timestamp)")
+
+        db.execSQL("""
+          CREATE TABLE IF NOT EXISTS expense_categories (
+            id TEXT PRIMARY KEY NOT NULL,
+            nameHi TEXT NOT NULL,
+            nameEn TEXT NOT NULL,
+            emoji TEXT NOT NULL,
+            colorHex TEXT NOT NULL,
+            keywords TEXT NOT NULL,
+            orderIndex INTEGER NOT NULL
+          )
+        """.trimIndent())
+
+        db.execSQL("""
+          CREATE TABLE IF NOT EXISTS expense_quick_chips (
+            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+            label TEXT NOT NULL,
+            amount REAL NOT NULL,
+            note TEXT NOT NULL,
+            category TEXT NOT NULL,
+            emoji TEXT NOT NULL,
+            usageCount INTEGER NOT NULL,
+            orderIndex INTEGER NOT NULL
+          )
+        """.trimIndent())
+      }
+    }
+
+    val MIGRATION_16_17 = object : Migration(16, 17) {
+      override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE expense_categories ADD COLUMN monthlyBudget REAL NOT NULL DEFAULT 0.0")
+
+        db.execSQL("""
+          CREATE TABLE IF NOT EXISTS expense_recurring (
+            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+            title TEXT NOT NULL,
+            amount REAL NOT NULL,
+            category TEXT NOT NULL,
+            categoryEmoji TEXT NOT NULL,
+            categoryColorHex TEXT NOT NULL,
+            dayOfMonth INTEGER NOT NULL,
+            isEnabled INTEGER NOT NULL,
+            lastAddedMonth TEXT NOT NULL
+          )
+        """.trimIndent())
+      }
+    }
+
+    val MIGRATION_17_18 = object : Migration(17, 18) {
+      override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("""
+          CREATE TABLE IF NOT EXISTS strict_lock_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+            timestamp INTEGER NOT NULL,
+            date TEXT NOT NULL,
+            time TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            triggerWord TEXT NOT NULL,
+            packageName TEXT NOT NULL,
+            durationMinutes INTEGER NOT NULL
+          )
+        """.trimIndent())
+      }
+    }
+
+    val MIGRATION_18_19 = object : Migration(18, 19) {
+      override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE strict_lock_events ADD COLUMN epochEndTimestamp INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE strict_lock_events ADD COLUMN elapsedRealtimeEnd INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE strict_lock_events ADD COLUMN startElapsedRealtime INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE strict_lock_events ADD COLUMN isCompleted INTEGER NOT NULL DEFAULT 0")
+      }
+    }
+
+    const val CURRENT_VERSION = 19
+
     fun getDatabase(context: Context): LifeTrackerDatabase {
       return INSTANCE ?: synchronized(this) {
         val instance = Room.databaseBuilder(
@@ -383,12 +598,29 @@ abstract class LifeTrackerDatabase : RoomDatabase() {
             MIGRATION_10_11,
             MIGRATION_11_12,
             MIGRATION_12_13,
-            MIGRATION_13_14
+            MIGRATION_13_14,
+            MIGRATION_14_15,
+            MIGRATION_13_15,
+            MIGRATION_15_16,
+            MIGRATION_16_17,
+            MIGRATION_17_18,
+            MIGRATION_18_19
           )
           .fallbackToDestructiveMigrationOnDowngrade()
           .build()
         INSTANCE = instance
         instance
+      }
+    }
+
+    fun closeDatabase() {
+      synchronized(this) {
+        try {
+          if (INSTANCE?.isOpen == true) {
+            INSTANCE?.close()
+          }
+        } catch (_: Exception) {}
+        INSTANCE = null
       }
     }
   }

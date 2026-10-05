@@ -38,6 +38,7 @@ import com.example.data.repository.LifeTrackerRepository
 import com.example.meditation.MeditationManager
 import com.example.meditation.MeditationState
 import com.example.util.ExportImportHelper
+import com.example.util.RoutineUtils
 import com.example.util.TimeUtils
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
@@ -69,7 +70,8 @@ enum class MainTab {
   TIMELINE,
   ALARM_CENTER,
   MUSIC,
-  SHORT_CONTENT_TRACKER
+  SHORT_CONTENT_TRACKER,
+  EXPENSE_DIARY
 }
 
 class LifeTrackerViewModel(application: Application) : AndroidViewModel(application) {
@@ -273,6 +275,254 @@ class LifeTrackerViewModel(application: Application) : AndroidViewModel(applicat
     SharingStarted.WhileSubscribed(5000),
     emptyList()
   )
+
+  // Expense Diary State & Flows
+  val allExpenses: StateFlow<List<com.example.data.model.ExpenseEntity>> =
+    repository.getAllExpenses().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+  val todayExpenses: StateFlow<List<com.example.data.model.ExpenseEntity>> =
+    repository.getTodayExpenses(todayDate).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+  val todayTotalSpend: StateFlow<Double> =
+    repository.getTodayTotalSpend(todayDate).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
+
+  val expenseQuickChips: StateFlow<List<com.example.data.model.ExpenseQuickChipEntity>> =
+    repository.getAllQuickChips().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+  val expenseCategories: StateFlow<List<com.example.data.model.ExpenseCategoryEntity>> =
+    repository.getAllExpenseCategories().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+  // Expense Diary budget & undo state
+  private val expensePrefs = getApplication<Application>().getSharedPreferences("expense_diary_prefs", Context.MODE_PRIVATE)
+  private val _monthlyBudget = MutableStateFlow(expensePrefs.getFloat("monthly_budget", 15000f).toDouble())
+  val monthlyBudget: StateFlow<Double> = _monthlyBudget.asStateFlow()
+
+  var lastDeletedExpense: com.example.data.model.ExpenseEntity? = null
+    private set
+
+  fun setMonthlyBudget(amount: Double) {
+    _monthlyBudget.value = amount
+    expensePrefs.edit().putFloat("monthly_budget", amount.toFloat()).apply()
+  }
+
+  fun addExpense(
+    amount: Double,
+    note: String,
+    category: String,
+    categoryEmoji: String = "🍔",
+    categoryColorHex: String = "#FF9800",
+    date: String = com.example.util.TimeUtils.getTodayDateString(),
+    time: String = java.text.SimpleDateFormat("hh:mm a", java.util.Locale.getDefault()).format(java.util.Date()),
+    mood: String? = null
+  ) {
+    viewModelScope.launch {
+      val entity = com.example.data.model.ExpenseEntity(
+        amount = amount,
+        note = note.trim(),
+        category = category,
+        categoryEmoji = categoryEmoji,
+        categoryColorHex = categoryColorHex,
+        date = date,
+        time = time,
+        timestamp = System.currentTimeMillis(),
+        mood = mood
+      )
+      repository.addExpense(entity)
+    }
+  }
+
+  fun updateExpense(expense: com.example.data.model.ExpenseEntity) {
+    viewModelScope.launch {
+      repository.updateExpense(expense)
+    }
+  }
+
+  fun deleteExpense(expense: com.example.data.model.ExpenseEntity) {
+    viewModelScope.launch {
+      lastDeletedExpense = expense
+      repository.deleteExpense(expense)
+    }
+  }
+
+  fun undoDeleteExpense() {
+    viewModelScope.launch {
+      lastDeletedExpense?.let {
+        repository.addExpense(it)
+        lastDeletedExpense = null
+      }
+    }
+  }
+
+  fun addCustomCategory(
+    nameHi: String,
+    nameEn: String,
+    emoji: String,
+    colorHex: String,
+    keywords: String
+  ) {
+    viewModelScope.launch {
+      val id = "cat_" + System.currentTimeMillis()
+      val cat = com.example.data.model.ExpenseCategoryEntity(
+        id = id,
+        nameHi = nameHi.trim(),
+        nameEn = nameEn.trim(),
+        emoji = emoji.trim(),
+        colorHex = colorHex,
+        keywords = keywords.trim(),
+        orderIndex = 100
+      )
+      repository.expenseDao.insertCategory(cat)
+    }
+  }
+
+  fun addQuickChip(
+    label: String,
+    amount: Double,
+    note: String,
+    category: String,
+    emoji: String
+  ) {
+    viewModelScope.launch {
+      val chip = com.example.data.model.ExpenseQuickChipEntity(
+        label = label.trim(),
+        amount = amount,
+        note = note.trim(),
+        category = category,
+        emoji = emoji,
+        usageCount = 1
+      )
+      repository.expenseDao.insertQuickChip(chip)
+    }
+  }
+
+  fun deleteQuickChip(id: Long) {
+    viewModelScope.launch {
+      repository.expenseDao.deleteQuickChipById(id)
+    }
+  }
+
+  fun updateQuickChip(chip: com.example.data.model.ExpenseQuickChipEntity) {
+    viewModelScope.launch {
+      repository.updateQuickChip(chip)
+    }
+  }
+
+  // --- Recurring Expenses State & Operations ---
+  val recurringExpenses: StateFlow<List<com.example.data.model.RecurringExpenseEntity>> =
+    repository.getAllRecurringExpenses().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+  fun addRecurringExpense(
+    title: String,
+    amount: Double,
+    category: String,
+    categoryEmoji: String = "🏠",
+    categoryColorHex: String = "#8B5CF6",
+    dayOfMonth: Int = 1
+  ) {
+    viewModelScope.launch {
+      val rec = com.example.data.model.RecurringExpenseEntity(
+        title = title.trim(),
+        amount = amount,
+        category = category,
+        categoryEmoji = categoryEmoji,
+        categoryColorHex = categoryColorHex,
+        dayOfMonth = dayOfMonth.coerceIn(1, 31),
+        isEnabled = true
+      )
+      repository.addRecurringExpense(rec)
+    }
+  }
+
+  fun updateRecurringExpense(rec: com.example.data.model.RecurringExpenseEntity) {
+    viewModelScope.launch {
+      repository.updateRecurringExpense(rec)
+    }
+  }
+
+  fun deleteRecurringExpense(rec: com.example.data.model.RecurringExpenseEntity) {
+    viewModelScope.launch {
+      repository.deleteRecurringExpense(rec)
+    }
+  }
+
+  fun checkRecurringExpenses() {
+    viewModelScope.launch {
+      repository.checkAndTriggerRecurringExpenses(todayDate)
+    }
+  }
+
+  fun updateExpenseCategory(cat: com.example.data.model.ExpenseCategoryEntity) {
+    viewModelScope.launch {
+      repository.updateExpenseCategory(cat)
+    }
+  }
+
+  fun deleteExpenseCategory(cat: com.example.data.model.ExpenseCategoryEntity) {
+    viewModelScope.launch {
+      repository.deleteExpenseCategory(cat)
+    }
+  }
+
+  // --- Expense Preferences & Security ---
+  private val _currencySymbol = MutableStateFlow(expensePrefs.getString("currency_symbol", "₹") ?: "₹")
+  val currencySymbol: StateFlow<String> = _currencySymbol.asStateFlow()
+
+  fun setCurrencySymbol(sym: String) {
+    _currencySymbol.value = sym
+    expensePrefs.edit().putString("currency_symbol", sym).apply()
+  }
+
+  private val _firstDayOfWeek = MutableStateFlow(expensePrefs.getString("first_day_of_week", "MONDAY") ?: "MONDAY")
+  val firstDayOfWeek: StateFlow<String> = _firstDayOfWeek.asStateFlow()
+
+  fun setFirstDayOfWeek(day: String) {
+    _firstDayOfWeek.value = day
+    expensePrefs.edit().putString("first_day_of_week", day).apply()
+  }
+
+  private val _reportColorTheme = MutableStateFlow(expensePrefs.getString("report_color_theme", "CLASSIC") ?: "CLASSIC")
+  val reportColorTheme: StateFlow<String> = _reportColorTheme.asStateFlow()
+
+  fun setReportColorTheme(theme: String) {
+    _reportColorTheme.value = theme
+    expensePrefs.edit().putString("report_color_theme", theme).apply()
+  }
+
+  private val _isAppLockEnabled = MutableStateFlow(expensePrefs.getBoolean("app_lock_enabled", false))
+  val isAppLockEnabled: StateFlow<Boolean> = _isAppLockEnabled.asStateFlow()
+
+  private val _appLockPin = MutableStateFlow(expensePrefs.getString("app_lock_pin", "") ?: "")
+  val appLockPin: StateFlow<String> = _appLockPin.asStateFlow()
+
+  fun setAppLock(enabled: Boolean, pin: String) {
+    _isAppLockEnabled.value = enabled
+    _appLockPin.value = pin
+    expensePrefs.edit().putBoolean("app_lock_enabled", enabled).putString("app_lock_pin", pin).apply()
+  }
+
+  fun restoreExpenseBackup(jsonStr: String, onResult: (Boolean, String) -> Unit) {
+    viewModelScope.launch {
+      try {
+        val data = com.example.expense.ExpenseBackupHelper.parseJsonBackup(jsonStr)
+        setMonthlyBudget(data.monthlyBudget)
+        for (cat in data.categories) {
+          repository.expenseDao.insertCategory(cat)
+        }
+        for (chip in data.quickChips) {
+          repository.expenseDao.insertQuickChip(chip)
+        }
+        for (exp in data.expenses) {
+          repository.expenseDao.insertExpense(exp)
+        }
+        for (rec in data.recurring) {
+          repository.expenseDao.insertRecurringExpense(rec)
+        }
+        onResult(true, "बैकअप रीस्टोर सफल! (${data.expenses.size} खर्च)")
+      } catch (e: Exception) {
+        onResult(false, e.localizedMessage ?: "अमान्य बैकअप JSON")
+      }
+    }
+  }
 
   // Short Content Tracker State & Flows
   val shortTrackerManager = ShortContentTrackerManager.getInstance(application)
@@ -700,6 +950,9 @@ class LifeTrackerViewModel(application: Application) : AndroidViewModel(applicat
       repository.getOrCreateTodayChallenge(getApplication(), todayDate)
       // Push widget update
       LifeTrackerWidgetProvider.updateAllWidgets(getApplication())
+      // Initialize Expense Diary defaults
+      repository.initializeExpenseDefaultsIfNeeded()
+      repository.checkAndTriggerRecurringExpenses(todayDate)
     }
     viewModelScope.launch {
       userSettings.collect { settings ->
@@ -883,44 +1136,54 @@ class LifeTrackerViewModel(application: Application) : AndroidViewModel(applicat
     onSuccess: (() -> Unit)? = null
   ) {
     viewModelScope.launch {
-      val targetId = if (id == 0L) {
-        val item = RoutineTemplateEntity(
-          name = name,
+      val existingById = if (id > 0L) repository.getRoutineTemplateById(id) else null
+      val targetKey = RoutineUtils.resolveActivityKey(name, existingById?.activityKey)
+
+      // Look up existing template by targetKey or by id
+      val existingByKey = repository.getRoutineTemplateByActivityKey(targetKey)
+      val existing = existingById ?: existingByKey
+
+      val targetId = if (existing != null) {
+        // UPDATE existing row to prevent duplicate active routine rows
+        val updated = existing.copy(
+          activityKey = targetKey,
+          name = name.trim(),
           timeMinutes = timeMinutes,
-          category = category,
-          notes = notes,
+          category = category.trim(),
+          notes = notes.trim(),
+          daysMask = daysMask,
+          isActive = isActive,
+          priority = priority
+        )
+        repository.updateRoutineTemplate(updated)
+        existing.id
+      } else {
+        // INSERT new unique routine row
+        val item = RoutineTemplateEntity(
+          activityKey = targetKey,
+          name = name.trim(),
+          timeMinutes = timeMinutes,
+          category = category.trim(),
+          notes = notes.trim(),
           daysMask = daysMask,
           isActive = isActive,
           orderIndex = routineTemplates.value.size,
           priority = priority
         )
         repository.insertRoutineTemplate(item)
-      } else {
-        val existing = routineTemplates.value.firstOrNull { it.id == id }
-        if (existing != null) {
-          val updated = existing.copy(
-            name = name,
-            timeMinutes = timeMinutes,
-            category = category,
-            notes = notes,
-            daysMask = daysMask,
-            isActive = isActive,
-            priority = priority
-          )
-          repository.updateRoutineTemplate(updated)
-        }
-        id
       }
 
       // 1. Immediately synchronize today's tasks so Home Screen & Daily Context reflect changes instantly
       repository.syncTodayTasksWithTemplates(todayDate)
 
       // 2. Cancel previous alarm and reschedule new alarm for the updated time
-      AlarmScheduler.cancelTimetableAlarm(context, targetId)
+      AlarmScheduler.cancelTimetableAlarm(context, targetId, targetKey)
       if (isActive) {
         val saved = repository.getRoutineTemplateById(targetId)
         if (saved != null) {
-          AlarmScheduler.scheduleTimetableAlarm(context, saved)
+          val settings = userSettings.value
+          val smartReminder = settings?.smartReminderMinutes ?: 0
+          AlarmScheduler.scheduleTimetableAlarm(context, saved, smartReminder)
         }
       }
 
@@ -1255,6 +1518,23 @@ class LifeTrackerViewModel(application: Application) : AndroidViewModel(applicat
     }
   }
 
+  // App Reset & User Data Verification
+  suspend fun hasExistingUserData(): Boolean {
+    return repository.hasExistingUserData(getApplication<Application>())
+  }
+
+  fun resetAppToFreshState(onResult: (Boolean, String) -> Unit) {
+    viewModelScope.launch {
+      val res = repository.resetAppToFreshState(getApplication<Application>(), _selectedDate.value)
+      if (res.isSuccess) {
+        selectDate(_selectedDate.value)
+        onResult(true, "ऐप सफलतापूर्वक नए सिरे से रीसेट हो गया है!")
+      } else {
+        onResult(false, res.exceptionOrNull()?.localizedMessage ?: "रीसेट विफल")
+      }
+    }
+  }
+
   // Feature 1: Streak calculation logic
   private fun calculateStreak(tasksList: List<DayTaskEntity>): StreakInfo {
     val tasksByDate = tasksList.groupBy { it.date }
@@ -1452,17 +1732,32 @@ class LifeTrackerViewModel(application: Application) : AndroidViewModel(applicat
     priority: String = "NORMAL"
   ) {
     viewModelScope.launch {
-      val maxOrder = routineTemplates.value.maxOfOrNull { it.orderIndex } ?: 0
-      val template = RoutineTemplateEntity(
-        name = name.trim(),
-        timeMinutes = timeMinutes,
-        category = category.trim(),
-        priority = priority,
-        orderIndex = maxOrder + 1,
-        daysMask = 127,
-        isActive = true
-      )
-      repository.insertRoutineTemplate(template)
+      val targetKey = RoutineUtils.resolveActivityKey(name)
+      val existing = repository.getRoutineTemplateByActivityKey(targetKey)
+
+      if (existing != null) {
+        val updated = existing.copy(
+          name = name.trim(),
+          timeMinutes = timeMinutes,
+          category = category.trim(),
+          priority = priority,
+          isActive = true
+        )
+        repository.updateRoutineTemplate(updated)
+      } else {
+        val maxOrder = routineTemplates.value.maxOfOrNull { it.orderIndex } ?: 0
+        val template = RoutineTemplateEntity(
+          activityKey = targetKey,
+          name = name.trim(),
+          timeMinutes = timeMinutes,
+          category = category.trim(),
+          priority = priority,
+          orderIndex = maxOrder + 1,
+          daysMask = 127,
+          isActive = true
+        )
+        repository.insertRoutineTemplate(template)
+      }
       repository.syncTodayTasksWithTemplates(todayDate)
       AlarmScheduler.rescheduleAllTimetableAlarms(getApplication())
     }
@@ -1552,6 +1847,20 @@ class LifeTrackerViewModel(application: Application) : AndroidViewModel(applicat
     }
   }
 
+  fun createMoodPlaylist(name: String, colorHex: String, icon: String = "⚡") {
+    viewModelScope.launch {
+      val db = com.example.data.db.LifeTrackerDatabase.getDatabase(getApplication())
+      db.musicDao().insertPlaylist(
+        com.example.data.model.PlaylistEntity(
+          name = name,
+          description = "Custom Mood",
+          colorHex = colorHex,
+          icon = icon
+        )
+      )
+    }
+  }
+
   fun deletePlaylist(playlistId: Long) {
     viewModelScope.launch {
       repository.deletePlaylist(playlistId)
@@ -1568,6 +1877,38 @@ class LifeTrackerViewModel(application: Application) : AndroidViewModel(applicat
     viewModelScope.launch {
       repository.removeSongFromPlaylist(playlistId, songId)
     }
+  }
+
+  fun getPlaylistsForSong(songId: String, onResult: (List<Long>) -> Unit) {
+    viewModelScope.launch {
+      val db = com.example.data.db.LifeTrackerDatabase.getDatabase(getApplication())
+      val ids = db.musicDao().getPlaylistsForSong(songId)
+      onResult(ids)
+    }
+  }
+
+  fun playNextSong(song: SongEntity) {
+    musicManager.playNext(song)
+  }
+
+  fun addSongToQueue(song: SongEntity) {
+    musicManager.addToQueue(song)
+  }
+
+  fun moveQueueItem(from: Int, to: Int) {
+    musicManager.moveQueueItem(from, to)
+  }
+
+  fun removeFromQueue(index: Int) {
+    musicManager.removeFromQueue(index)
+  }
+
+  fun clearMusicQueue() {
+    musicManager.clearQueue()
+  }
+
+  fun setMusicPlaybackSpeed(speed: Float) {
+    musicManager.setPlaybackSpeed(speed)
   }
 
   fun addPlaylistRule(rule: PlaylistRuleEntity) {
@@ -1678,7 +2019,27 @@ class LifeTrackerViewModel(application: Application) : AndroidViewModel(applicat
 
   // --- FOCUS / PHONE RESTRICTION ACTIONS ---
 
+  val strictLockEvents: StateFlow<List<com.example.data.model.StrictLockEventEntity>> =
+    repository.getAllStrictLockEvents().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+  fun isStrictLockActive(): Boolean = com.example.focus.FocusModeManager.isStrictLockActive(getApplication())
+
+  fun activateStrictLock(durationMinutes: Int = 15, reason: String = "वयस्क सामग्री पहचान") {
+    com.example.focus.FocusModeManager.activateStrictLock(
+      context = getApplication(),
+      durationMinutes = durationMinutes,
+      reason = reason
+    )
+    viewModelScope.launch {
+      repository.updateFocusModeActive(true)
+    }
+  }
+
   fun setFocusModeActive(active: Boolean) {
+    if (!active && com.example.focus.FocusModeManager.isStrictLockActive(getApplication())) {
+      android.util.Log.w("LifeTrackerViewModel", "Strict Lock active; manual deactivation blocked.")
+      return
+    }
     viewModelScope.launch {
       repository.updateFocusModeActive(active)
       if (active) {
@@ -1728,6 +2089,10 @@ class LifeTrackerViewModel(application: Application) : AndroidViewModel(applicat
   }
 
   fun unlockFocusMode() {
+    if (com.example.focus.FocusModeManager.isStrictLockActive(getApplication())) {
+      android.util.Log.w("LifeTrackerViewModel", "Strict Lock active; unlockFocusMode blocked.")
+      return
+    }
     com.example.focus.FocusModeManager.deactivateFocusMode(getApplication())
     viewModelScope.launch {
       repository.updateFocusModeActive(false)

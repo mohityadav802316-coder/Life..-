@@ -2,19 +2,20 @@ package com.example.music
 
 import android.content.Context
 import android.content.Intent
-import android.media.AudioAttributes
-import android.media.AudioFormat
-import android.media.AudioManager
-import android.media.AudioTrack
-import android.media.MediaPlayer
+import android.content.SharedPreferences
 import android.net.Uri
 import android.os.Build
-import android.os.Handler
-import android.os.Looper
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
+import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
+import androidx.media3.common.PlaybackParameters
+import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
 import com.example.data.db.LifeTrackerDatabase
+import com.example.data.model.MusicMood
 import com.example.data.model.PlaylistEntity
 import com.example.data.model.SongEntity
-import com.example.data.model.MusicMood
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -26,8 +27,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlin.math.PI
-import kotlin.math.sin
+import kotlinx.coroutines.withContext
 
 enum class RepeatMode {
   OFF, ALL, ONE
@@ -42,9 +42,9 @@ data class MusicPlayerState(
   val currentIndex: Int = 0,
   val isShuffle: Boolean = false,
   val repeatMode: RepeatMode = RepeatMode.ALL,
+  val playbackSpeed: Float = 1.0f,
   val currentPlaylist: PlaylistEntity? = null,
   val currentSituation: String? = null,
-  val sleepTimerMinutesRemaining: Int = 0,
   val volume: Float = 1.0f
 ) {
   val currentMood: MusicMood
@@ -60,15 +60,111 @@ class MusicPlayerManager private constructor(private val appContext: Context) {
   private val _playerState = MutableStateFlow(MusicPlayerState())
   val playerState: StateFlow<MusicPlayerState> = _playerState.asStateFlow()
 
-  private var mediaPlayer: MediaPlayer? = null
-  private var audioTrackSynthesizer: AudioTrack? = null
-  private var synthJob: Job? = null
+  private val prefs: SharedPreferences =
+    appContext.getSharedPreferences("music_playback_saved_state", Context.MODE_PRIVATE)
+
+  val exoPlayer: ExoPlayer by lazy {
+    val audioAttributes = AudioAttributes.Builder()
+      .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+      .setUsage(C.USAGE_MEDIA)
+      .build()
+
+    ExoPlayer.Builder(appContext)
+      .setAudioAttributes(audioAttributes, /* handleAudioFocus = */ true)
+      .setHandleAudioBecomingNoisy(true)
+      .setWakeMode(C.WAKE_MODE_LOCAL)
+      .build().apply {
+        repeatMode = Player.REPEAT_MODE_ALL
+        shuffleModeEnabled = false
+        addListener(createPlayerListener())
+      }
+  }
+
   private var progressTrackerJob: Job? = null
-  private var sleepTimerJob: Job? = null
-
   private val db = LifeTrackerDatabase.getDatabase(appContext)
+  private val equalizerManager = EqualizerManager.getInstance(appContext)
+  private val sleepTimerManager = SleepTimerManager.getInstance(appContext)
 
-  fun playQueue(songs: List<SongEntity>, startIndex: Int = 0, playlist: PlaylistEntity? = null, situation: String? = null) {
+  init {
+    setupSleepTimerCallbacks()
+    restoreSavedState()
+  }
+
+  private fun createPlayerListener(): Player.Listener {
+    return object : Player.Listener {
+      override fun onPlaybackStateChanged(playbackState: Int) {
+        when (playbackState) {
+          Player.STATE_READY -> {
+            val dur = exoPlayer.duration.coerceAtLeast(0L)
+            _playerState.update { it.copy(durationMs = dur) }
+            savePlaybackState()
+          }
+          Player.STATE_ENDED -> {
+            sleepTimerManager.onTrackCompleted()
+            _playerState.update { it.copy(isPlaying = false) }
+          }
+          else -> {}
+        }
+      }
+
+      override fun onIsPlayingChanged(isPlaying: Boolean) {
+        _playerState.update { it.copy(isPlaying = isPlaying) }
+        if (isPlaying) {
+          startProgressTracker()
+          startPlaybackService()
+        } else {
+          progressTrackerJob?.cancel()
+        }
+        savePlaybackState()
+      }
+
+      override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+        sleepTimerManager.onTrackCompleted()
+        val index = exoPlayer.currentMediaItemIndex
+        val currentQueue = _playerState.value.queue
+
+        if (index in currentQueue.indices) {
+          val song = currentQueue[index]
+          _playerState.update {
+            it.copy(
+              currentSong = song,
+              currentIndex = index,
+              durationMs = song.durationMs
+            )
+          }
+
+          // Record in play history
+          scope.launch(Dispatchers.IO) {
+            db.musicDao().recordSongPlayed(song.id, System.currentTimeMillis())
+          }
+        }
+        savePlaybackState()
+      }
+
+      override fun onAudioSessionIdChanged(audioSessionId: Int) {
+        if (audioSessionId > 0) {
+          equalizerManager.attachAudioSession(audioSessionId)
+        }
+      }
+    }
+  }
+
+  private fun setupSleepTimerCallbacks() {
+    sleepTimerManager.onFadeVolume = { vol ->
+      exoPlayer.volume = vol
+      _playerState.update { it.copy(volume = vol) }
+    }
+    sleepTimerManager.onTimerExpired = {
+      pause()
+    }
+  }
+
+  fun playQueue(
+    songs: List<SongEntity>,
+    startIndex: Int = 0,
+    playlist: PlaylistEntity? = null,
+    situation: String? = null
+  ) {
     if (songs.isEmpty()) return
     val safeIndex = startIndex.coerceIn(0, songs.size - 1)
 
@@ -76,132 +172,226 @@ class MusicPlayerManager private constructor(private val appContext: Context) {
       it.copy(
         queue = songs,
         currentIndex = safeIndex,
+        currentSong = songs[safeIndex],
         currentPlaylist = playlist,
-        currentSituation = situation
+        currentSituation = situation,
+        durationMs = songs[safeIndex].durationMs,
+        currentPositionMs = 0L
       )
     }
 
-    playSong(songs[safeIndex])
+    val mediaItems = songs.map { toMediaItem(it) }
+    exoPlayer.setMediaItems(mediaItems, safeIndex, 0L)
+    exoPlayer.prepare()
+    exoPlayer.play()
+
+    startPlaybackService()
+    startProgressTracker()
   }
 
   fun playSong(song: SongEntity) {
-    stopCurrentPlayback()
+    val currentQueue = _playerState.value.queue.toMutableList()
+    val existingIndex = currentQueue.indexOfFirst { it.id == song.id }
 
-    _playerState.update {
-      it.copy(
-        currentSong = song,
-        isPlaying = true,
-        currentPositionMs = 0L,
-        durationMs = song.durationMs
-      )
-    }
-
-    // Record in history & bump playCount
-    scope.launch(Dispatchers.IO) {
-      db.musicDao().recordSongPlayed(song.id, System.currentTimeMillis())
-    }
-
-    if (song.isBuiltIn) {
-      playBuiltInTrack(song)
+    if (existingIndex >= 0) {
+      _playerState.update { it.copy(currentIndex = existingIndex, currentSong = song) }
+      exoPlayer.seekTo(existingIndex, 0L)
+      exoPlayer.play()
     } else {
-      playDeviceAudio(song)
+      // Create new single-song queue or append
+      val newQueue = listOf(song)
+      playQueue(newQueue, 0)
     }
-
-    startProgressTracker()
-    startForegroundService()
+    startPlaybackService()
   }
 
-  fun togglePlayPause() {
+  fun playNext(song: SongEntity) {
     val state = _playerState.value
-    if (state.currentSong == null) {
-      // If nothing loaded, try to play first from queue or library
-      scope.launch(Dispatchers.IO) {
-        val allSongs = LocalMusicScanner.scanDeviceAudio(appContext)
-        if (allSongs.isNotEmpty()) {
-          launch(Dispatchers.Main) { playQueue(allSongs, 0) }
-        }
-      }
+    if (state.queue.isEmpty()) {
+      playQueue(listOf(song), 0)
       return
     }
 
-    if (state.isPlaying) {
+    val currentQueue = state.queue.toMutableList()
+    val insertIndex = (state.currentIndex + 1).coerceAtMost(currentQueue.size)
+    currentQueue.add(insertIndex, song)
+
+    _playerState.update { it.copy(queue = currentQueue) }
+    exoPlayer.addMediaItem(insertIndex, toMediaItem(song))
+    savePlaybackState()
+  }
+
+  fun addToQueue(song: SongEntity) {
+    val state = _playerState.value
+    if (state.queue.isEmpty()) {
+      playQueue(listOf(song), 0)
+      return
+    }
+
+    val currentQueue = state.queue.toMutableList()
+    currentQueue.add(song)
+
+    _playerState.update { it.copy(queue = currentQueue) }
+    exoPlayer.addMediaItem(toMediaItem(song))
+    savePlaybackState()
+  }
+
+  fun moveQueueItem(fromIndex: Int, toIndex: Int) {
+    val currentQueue = _playerState.value.queue.toMutableList()
+    if (fromIndex !in currentQueue.indices || toIndex !in currentQueue.indices || fromIndex == toIndex) return
+
+    val item = currentQueue.removeAt(fromIndex)
+    currentQueue.add(toIndex, item)
+
+    val newIndex = when {
+      _playerState.value.currentIndex == fromIndex -> toIndex
+      fromIndex < _playerState.value.currentIndex && toIndex >= _playerState.value.currentIndex -> _playerState.value.currentIndex - 1
+      fromIndex > _playerState.value.currentIndex && toIndex <= _playerState.value.currentIndex -> _playerState.value.currentIndex + 1
+      else -> _playerState.value.currentIndex
+    }
+
+    _playerState.update { it.copy(queue = currentQueue, currentIndex = newIndex) }
+    exoPlayer.moveMediaItem(fromIndex, toIndex)
+    savePlaybackState()
+  }
+
+  fun removeFromQueue(index: Int) {
+    val currentQueue = _playerState.value.queue.toMutableList()
+    if (index !in currentQueue.indices) return
+
+    if (currentQueue.size <= 1) {
+      exoPlayer.stop()
+      exoPlayer.clearMediaItems()
+      _playerState.update {
+        MusicPlayerState()
+      }
+      savePlaybackState()
+      return
+    }
+
+    currentQueue.removeAt(index)
+    exoPlayer.removeMediaItem(index)
+
+    val newCurrentIndex = if (index < _playerState.value.currentIndex) {
+      _playerState.value.currentIndex - 1
+    } else {
+      _playerState.value.currentIndex.coerceAtMost(currentQueue.size - 1)
+    }
+
+    val newCurrentSong = currentQueue.getOrNull(newCurrentIndex)
+    _playerState.update {
+      it.copy(
+        queue = currentQueue,
+        currentIndex = newCurrentIndex,
+        currentSong = newCurrentSong
+      )
+    }
+    savePlaybackState()
+  }
+
+  fun clearQueue() {
+    exoPlayer.stop()
+    exoPlayer.clearMediaItems()
+    _playerState.update { MusicPlayerState() }
+    savePlaybackState()
+  }
+
+  fun togglePlayPause() {
+    if (exoPlayer.isPlaying) {
       pause()
     } else {
+      if (exoPlayer.playbackState == Player.STATE_IDLE || exoPlayer.mediaItemCount == 0) {
+        val q = _playerState.value.queue
+        if (q.isNotEmpty()) {
+          val items = q.map { toMediaItem(it) }
+          val idx = _playerState.value.currentIndex.coerceIn(0, q.size - 1)
+          val pos = _playerState.value.currentPositionMs
+          exoPlayer.setMediaItems(items, idx, pos)
+          exoPlayer.prepare()
+        }
+      }
       resume()
     }
   }
 
   fun pause() {
+    exoPlayer.pause()
     _playerState.update { it.copy(isPlaying = false) }
-    try {
-      mediaPlayer?.pause()
-    } catch (_: Exception) {}
-    try {
-      audioTrackSynthesizer?.pause()
-    } catch (_: Exception) {}
-    updateForegroundNotification()
+    savePlaybackState()
   }
 
   fun resume() {
+    exoPlayer.play()
     _playerState.update { it.copy(isPlaying = true) }
-    try {
-      mediaPlayer?.start()
-    } catch (_: Exception) {}
-    try {
-      audioTrackSynthesizer?.play()
-    } catch (_: Exception) {}
     startProgressTracker()
-    updateForegroundNotification()
+    startPlaybackService()
+    savePlaybackState()
   }
 
   fun next() {
-    val state = _playerState.value
-    if (state.queue.isEmpty()) return
-
-    val nextIndex = if (state.isShuffle) {
-      (0 until state.queue.size).random()
+    if (exoPlayer.hasNextMediaItem()) {
+      exoPlayer.seekToNextMediaItem()
+      exoPlayer.play()
     } else {
-      (state.currentIndex + 1) % state.queue.size
+      // Loop to beginning if repeat mode is ALL
+      if (_playerState.value.repeatMode == RepeatMode.ALL && exoPlayer.mediaItemCount > 0) {
+        exoPlayer.seekTo(0, 0L)
+        exoPlayer.play()
+      }
     }
-
-    _playerState.update { it.copy(currentIndex = nextIndex) }
-    playSong(state.queue[nextIndex])
   }
 
   fun previous() {
-    val state = _playerState.value
-    if (state.queue.isEmpty()) return
-
-    val prevIndex = if (state.currentPositionMs > 3000L) {
-      state.currentIndex // Restart current song if played > 3s
+    if (exoPlayer.currentPosition > 3000L) {
+      exoPlayer.seekTo(0L)
+    } else if (exoPlayer.hasPreviousMediaItem()) {
+      exoPlayer.seekToPreviousMediaItem()
+      exoPlayer.play()
     } else {
-      if (state.currentIndex - 1 < 0) state.queue.size - 1 else state.currentIndex - 1
+      // Loop to end if repeat mode is ALL
+      if (_playerState.value.repeatMode == RepeatMode.ALL && exoPlayer.mediaItemCount > 0) {
+        val lastIdx = exoPlayer.mediaItemCount - 1
+        exoPlayer.seekTo(lastIdx, 0L)
+        exoPlayer.play()
+      }
     }
-
-    _playerState.update { it.copy(currentIndex = prevIndex) }
-    playSong(state.queue[prevIndex])
   }
 
   fun seekTo(positionMs: Long) {
     _playerState.update { it.copy(currentPositionMs = positionMs) }
-    try {
-      mediaPlayer?.seekTo(positionMs.toInt())
-    } catch (_: Exception) {}
+    exoPlayer.seekTo(positionMs)
+    savePlaybackState()
+  }
+
+  fun setPlaybackSpeed(speed: Float) {
+    val clamped = speed.coerceIn(0.5f, 2.0f)
+    exoPlayer.playbackParameters = PlaybackParameters(clamped)
+    _playerState.update { it.copy(playbackSpeed = clamped) }
+    prefs.edit().putFloat(KEY_SPEED, clamped).apply()
   }
 
   fun toggleShuffle() {
-    _playerState.update { it.copy(isShuffle = !it.isShuffle) }
+    val nextShuffle = !_playerState.value.isShuffle
+    exoPlayer.shuffleModeEnabled = nextShuffle
+    _playerState.update { it.copy(isShuffle = nextShuffle) }
+    prefs.edit().putBoolean(KEY_SHUFFLE, nextShuffle).apply()
   }
 
   fun toggleRepeatMode() {
-    _playerState.update {
-      val next = when (it.repeatMode) {
-        RepeatMode.OFF -> RepeatMode.ALL
-        RepeatMode.ALL -> RepeatMode.ONE
-        RepeatMode.ONE -> RepeatMode.OFF
-      }
-      it.copy(repeatMode = next)
+    val nextMode = when (_playerState.value.repeatMode) {
+      RepeatMode.OFF -> RepeatMode.ALL
+      RepeatMode.ALL -> RepeatMode.ONE
+      RepeatMode.ONE -> RepeatMode.OFF
     }
+
+    exoPlayer.repeatMode = when (nextMode) {
+      RepeatMode.OFF -> Player.REPEAT_MODE_OFF
+      RepeatMode.ALL -> Player.REPEAT_MODE_ALL
+      RepeatMode.ONE -> Player.REPEAT_MODE_ONE
+    }
+
+    _playerState.update { it.copy(repeatMode = nextMode) }
+    prefs.edit().putString(KEY_REPEAT, nextMode.name).apply()
   }
 
   fun toggleFavorite(song: SongEntity) {
@@ -209,163 +399,30 @@ class MusicPlayerManager private constructor(private val appContext: Context) {
       val newFav = !song.isFavorite
       db.musicDao().updateFavoriteStatus(song.id, newFav)
       _playerState.update { state ->
-        if (state.currentSong?.id == song.id) {
-          state.copy(currentSong = state.currentSong.copy(isFavorite = newFav))
-        } else state
+        val updatedQueue = state.queue.map {
+          if (it.id == song.id) it.copy(isFavorite = newFav) else it
+        }
+        val updatedCurrent = if (state.currentSong?.id == song.id) {
+          state.currentSong.copy(isFavorite = newFav)
+        } else state.currentSong
+        state.copy(queue = updatedQueue, currentSong = updatedCurrent)
       }
     }
   }
 
   fun setSleepTimer(minutes: Int) {
-    sleepTimerJob?.cancel()
-    _playerState.update { it.copy(sleepTimerMinutesRemaining = minutes) }
-
-    if (minutes > 0) {
-      sleepTimerJob = scope.launch {
-        var remaining = minutes
-        while (remaining > 0 && isActive) {
-          delay(60000L)
-          remaining--
-          _playerState.update { it.copy(sleepTimerMinutesRemaining = remaining) }
-        }
-        pause()
-        _playerState.update { it.copy(sleepTimerMinutesRemaining = 0) }
-      }
-    }
+    sleepTimerManager.startTimer(minutes)
   }
 
-  /**
-   * Smart Rule Playback:
-   * Selects playlist & songs according to the user's defined Time + Mood rules
-   */
   fun playByCurrentTimeRule(currentMinutes: Int) {
     scope.launch(Dispatchers.IO) {
       val rules = db.musicDao().getRulesMatchingTime(currentMinutes)
       val rule = rules.firstOrNull() ?: return@launch
       val playlist = db.musicDao().getPlaylistById(rule.playlistId)
       val songs = db.musicDao().getSongsForPlaylistSync(rule.playlistId)
-
       if (songs.isNotEmpty()) {
-        val moodFiltered = songs.filter { it.mood.equals(rule.mood, ignoreCase = true) }
-        val playlistSongs = if (moodFiltered.isNotEmpty()) moodFiltered else songs
-
-        launch(Dispatchers.Main) {
-          playQueue(
-            songs = playlistSongs,
-            startIndex = 0,
-            playlist = playlist,
-            situation = rule.situation
-          )
-        }
-      }
-    }
-  }
-
-  private fun playDeviceAudio(song: SongEntity) {
-    try {
-      mediaPlayer = MediaPlayer().apply {
-        setAudioAttributes(
-          AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_MEDIA)
-            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-            .build()
-        )
-        setDataSource(appContext, Uri.parse(song.contentUri))
-        prepareAsync()
-        setOnPreparedListener { mp ->
-          val dur = mp.duration.toLong()
-          _playerState.update { it.copy(durationMs = if (dur > 0) dur else song.durationMs) }
-          mp.start()
-        }
-        setOnCompletionListener {
-          handleSongCompletion()
-        }
-        setOnErrorListener { _, _, _ ->
-          // Fallback to built-in peaceful soundscape if file cannot be read
-          playBuiltInTrack(song)
-          true
-        }
-      }
-    } catch (_: Exception) {
-      playBuiltInTrack(song)
-    }
-  }
-
-  private fun playBuiltInTrack(song: SongEntity) {
-    synthJob?.cancel()
-    synthJob = scope.launch(Dispatchers.Default) {
-      val sampleRate = 44100
-      val baseFreq = when (song.mood) {
-        "ENERGETIC" -> 440.0
-        "FOCUS" -> 432.0
-        "HAPPY" -> 528.0
-        "SLEEP" -> 216.0
-        "DEVOTIONAL" -> 288.0
-        else -> 396.0 // CALM
-      }
-
-      val bufferSize = AudioTrack.getMinBufferSize(
-        sampleRate,
-        AudioFormat.CHANNEL_OUT_MONO,
-        AudioFormat.ENCODING_PCM_16BIT
-      )
-
-      val track = AudioTrack.Builder()
-        .setAudioAttributes(
-          AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_MEDIA)
-            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-            .build()
-        )
-        .setAudioFormat(
-          AudioFormat.Builder()
-            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-            .setSampleRate(sampleRate)
-            .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-            .build()
-        )
-        .setBufferSizeInBytes(bufferSize * 4)
-        .setTransferMode(AudioTrack.MODE_STREAM)
-        .build()
-
-      audioTrackSynthesizer = track
-      track.play()
-
-      val samples = ShortArray(bufferSize)
-      var phase = 0.0
-      val twoPi = 2 * PI
-
-      while (isActive && _playerState.value.isPlaying) {
-        for (i in samples.indices) {
-          // Harmonic wave with soothing envelope & modulation
-          val wave = (
-            0.65 * sin(phase) +
-            0.25 * sin(phase * 2.0) +
-            0.10 * sin(phase * 3.0)
-          )
-          samples[i] = (wave * Short.MAX_VALUE * 0.45).toInt().toShort()
-
-          phase += twoPi * baseFreq / sampleRate
-          if (phase > twoPi) phase -= twoPi
-        }
-        track.write(samples, 0, samples.size)
-      }
-    }
-  }
-
-  private fun handleSongCompletion() {
-    when (_playerState.value.repeatMode) {
-      RepeatMode.ONE -> {
-        seekTo(0)
-        resume()
-      }
-      RepeatMode.ALL -> next()
-      RepeatMode.OFF -> {
-        if (_playerState.value.currentIndex < _playerState.value.queue.size - 1) {
-          next()
-        } else {
-          pause()
-          seekTo(0)
+        withContext(Dispatchers.Main) {
+          playQueue(songs, 0, playlist, rule.situation)
         }
       }
     }
@@ -374,49 +431,16 @@ class MusicPlayerManager private constructor(private val appContext: Context) {
   private fun startProgressTracker() {
     progressTrackerJob?.cancel()
     progressTrackerJob = scope.launch {
-      while (isActive) {
+      while (isActive && exoPlayer.isPlaying) {
+        val pos = exoPlayer.currentPosition
+        val dur = exoPlayer.duration.coerceAtLeast(0L)
+        _playerState.update { it.copy(currentPositionMs = pos, durationMs = dur) }
         delay(500L)
-        if (_playerState.value.isPlaying) {
-          val pos = try {
-            mediaPlayer?.currentPosition?.toLong() ?: (_playerState.value.currentPositionMs + 500L)
-          } catch (_: Exception) {
-            _playerState.value.currentPositionMs + 500L
-          }
-          val totalDur = _playerState.value.durationMs
-          if (totalDur > 0 && pos >= totalDur && _playerState.value.currentSong?.isBuiltIn == true) {
-            handleSongCompletion()
-          } else {
-            _playerState.update { it.copy(currentPositionMs = pos) }
-          }
-        }
       }
     }
   }
 
-  private fun stopCurrentPlayback() {
-    try {
-      mediaPlayer?.stop()
-      mediaPlayer?.release()
-    } catch (_: Exception) {}
-    mediaPlayer = null
-
-    try {
-      audioTrackSynthesizer?.stop()
-      audioTrackSynthesizer?.release()
-    } catch (_: Exception) {}
-    audioTrackSynthesizer = null
-    synthJob?.cancel()
-  }
-
-  fun stop() {
-    stopCurrentPlayback()
-    progressTrackerJob?.cancel()
-    sleepTimerJob?.cancel()
-    _playerState.update { it.copy(isPlaying = false, currentPositionMs = 0L) }
-    stopForegroundService()
-  }
-
-  private fun startForegroundService() {
+  private fun startPlaybackService() {
     try {
       val intent = Intent(appContext, MusicPlaybackService::class.java).apply {
         action = MusicPlaybackService.ACTION_START
@@ -429,25 +453,100 @@ class MusicPlayerManager private constructor(private val appContext: Context) {
     } catch (_: Exception) {}
   }
 
-  private fun updateForegroundNotification() {
+  private fun toMediaItem(song: SongEntity): MediaItem {
+    val metadata = MediaMetadata.Builder()
+      .setTitle(song.title)
+      .setArtist(song.artist)
+      .setAlbumTitle(song.album)
+      .setDisplayTitle(song.title)
+      .setArtworkUri(if (!song.albumArtUri.isNullOrBlank()) Uri.parse(song.albumArtUri) else null)
+      .build()
+
+    return MediaItem.Builder()
+      .setMediaId(song.id)
+      .setUri(Uri.parse(song.contentUri))
+      .setMediaMetadata(metadata)
+      .build()
+  }
+
+  private fun savePlaybackState() {
     try {
-      val intent = Intent(appContext, MusicPlaybackService::class.java).apply {
-        action = MusicPlaybackService.ACTION_UPDATE
-      }
-      appContext.startService(intent)
+      val state = _playerState.value
+      val queueIds = state.queue.joinToString(",") { it.id }
+      prefs.edit()
+        .putString(KEY_SAVED_QUEUE, queueIds)
+        .putString(KEY_CURRENT_SONG_ID, state.currentSong?.id ?: "")
+        .putInt(KEY_CURRENT_INDEX, state.currentIndex)
+        .putLong(KEY_POSITION_MS, exoPlayer.currentPosition)
+        .apply()
     } catch (_: Exception) {}
   }
 
-  private fun stopForegroundService() {
-    try {
-      val intent = Intent(appContext, MusicPlaybackService::class.java).apply {
-        action = MusicPlaybackService.ACTION_STOP
-      }
-      appContext.startService(intent)
-    } catch (_: Exception) {}
+  private fun restoreSavedState() {
+    scope.launch(Dispatchers.IO) {
+      try {
+        val queueRaw = prefs.getString(KEY_SAVED_QUEUE, null)
+        val lastSongId = prefs.getString(KEY_CURRENT_SONG_ID, null)
+        val savedIndex = prefs.getInt(KEY_CURRENT_INDEX, 0)
+        val savedPos = prefs.getLong(KEY_POSITION_MS, 0L)
+        val savedSpeed = prefs.getFloat(KEY_SPEED, 1.0f)
+        val savedShuffle = prefs.getBoolean(KEY_SHUFFLE, false)
+        val savedRepeatStr = prefs.getString(KEY_REPEAT, RepeatMode.ALL.name)
+        val savedRepeat = try { RepeatMode.valueOf(savedRepeatStr ?: RepeatMode.ALL.name) } catch (_: Exception) { RepeatMode.ALL }
+
+        if (!queueRaw.isNullOrBlank()) {
+          val ids = queueRaw.split(",").filter { it.isNotBlank() }
+          val songsList = mutableListOf<SongEntity>()
+          for (id in ids) {
+            val s = db.musicDao().getSongById(id)
+            if (s != null) songsList.add(s)
+          }
+
+          if (songsList.isNotEmpty()) {
+            val safeIdx = savedIndex.coerceIn(0, songsList.size - 1)
+            val currentSong = songsList[safeIdx]
+
+            withContext(Dispatchers.Main) {
+              _playerState.update {
+                it.copy(
+                  queue = songsList,
+                  currentIndex = safeIdx,
+                  currentSong = currentSong,
+                  currentPositionMs = savedPos,
+                  durationMs = currentSong.durationMs,
+                  isShuffle = savedShuffle,
+                  repeatMode = savedRepeat,
+                  playbackSpeed = savedSpeed
+                )
+              }
+
+              // Prepare ExoPlayer with saved state without auto-playing
+              val items = songsList.map { toMediaItem(it) }
+              exoPlayer.setMediaItems(items, safeIdx, savedPos)
+              exoPlayer.shuffleModeEnabled = savedShuffle
+              exoPlayer.repeatMode = when (savedRepeat) {
+                RepeatMode.OFF -> Player.REPEAT_MODE_OFF
+                RepeatMode.ALL -> Player.REPEAT_MODE_ALL
+                RepeatMode.ONE -> Player.REPEAT_MODE_ONE
+              }
+              exoPlayer.playbackParameters = PlaybackParameters(savedSpeed)
+              exoPlayer.prepare()
+            }
+          }
+        }
+      } catch (_: Exception) {}
+    }
   }
 
   companion object {
+    private const val KEY_SAVED_QUEUE = "saved_queue_ids"
+    private const val KEY_CURRENT_SONG_ID = "current_song_id"
+    private const val KEY_CURRENT_INDEX = "current_index"
+    private const val KEY_POSITION_MS = "position_ms"
+    private const val KEY_SPEED = "playback_speed"
+    private const val KEY_SHUFFLE = "is_shuffle"
+    private const val KEY_REPEAT = "repeat_mode"
+
     @Volatile
     private var instance: MusicPlayerManager? = null
 

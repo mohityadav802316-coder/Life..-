@@ -7,7 +7,12 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
 class ExampleUnitTest {
   @Test
   fun addition_isCorrect() {
@@ -74,5 +79,25 @@ class ExampleUnitTest {
     val dateStr = TimeUtils.getTodayDateString()
     assertEquals(dateStr, dateIso)
     assertTrue(dateIso.matches(Regex("""\d{4}-\d{2}-\d{2}""")))
+  }
+
+  @Test
+  fun backupManifest_roundTripSerialization() {
+    val manifest = com.example.backup.BackupManifest(
+      appVersionCode = 2,
+      appVersionName = "1.1",
+      databaseVersion = 15,
+      createdAt = 1727800000000L,
+      createdDateIso = "2026-10-02T05:30:00Z",
+      recordCounts = mapOf("dayTasks" to 14, "routineTemplates" to 14),
+      checksums = mapOf("life_tracker_db" to "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+    )
+    val json = manifest.toJson()
+    val parsed = com.example.backup.BackupManifest.fromJson(json)
+    assertNotNull(parsed)
+    assertEquals(15, parsed!!.databaseVersion)
+    assertEquals(2, parsed.appVersionCode)
+    assertEquals(14, parsed.recordCounts["dayTasks"])
+    assertEquals("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", parsed.checksums["life_tracker_db"])
   }
 }

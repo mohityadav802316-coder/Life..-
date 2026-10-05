@@ -75,6 +75,12 @@ interface TaskDao {
   @Query("DELETE FROM day_tasks WHERE date = :date")
   suspend fun deleteTasksForDate(date: String)
 
+  @Query("SELECT * FROM day_tasks WHERE templateId = :templateId")
+  suspend fun getTasksForTemplateSync(templateId: Long): List<DayTaskEntity>
+
+  @Query("UPDATE day_tasks SET templateId = :newTemplateId WHERE templateId = :oldTemplateId")
+  suspend fun reassignTemplateId(oldTemplateId: Long, newTemplateId: Long)
+
   @Query("DELETE FROM day_tasks")
   suspend fun deleteAllTasks()
 }
@@ -95,6 +101,9 @@ interface RoutineDao {
 
   @Query("SELECT * FROM routine_templates WHERE id = :id LIMIT 1")
   suspend fun getRoutineTemplateById(id: Long): RoutineTemplateEntity?
+
+  @Query("SELECT * FROM routine_templates WHERE activityKey = :key LIMIT 1")
+  suspend fun getRoutineTemplateByActivityKey(key: String): RoutineTemplateEntity?
 
   @Insert(onConflict = OnConflictStrategy.REPLACE)
   suspend fun insertRoutineTemplate(template: RoutineTemplateEntity): Long

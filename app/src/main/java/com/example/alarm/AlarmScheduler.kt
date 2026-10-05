@@ -28,6 +28,7 @@ object AlarmScheduler {
   const val ACTION_TIMETABLE_REMINDER = "com.mohit.lifetracker.ACTION_TIMETABLE_REMINDER"
   const val ACTION_SMART_PRE_REMINDER = "com.mohit.lifetracker.ACTION_SMART_PRE_REMINDER"
   const val EXTRA_TEMPLATE_ID = "extra_template_id"
+  const val EXTRA_ACTIVITY_KEY = "extra_activity_key"
   const val EXTRA_ACTIVITY_NAME = "extra_activity_name"
   const val EXTRA_TIME_MINUTES = "extra_time_minutes"
   const val EXTRA_CATEGORY = "extra_category"
@@ -292,9 +293,56 @@ object AlarmScheduler {
    * Uses stable unique RequestCode derived from template.id to prevent duplicate alarms.
    * Compatible with Android lock-screen and background Doze mode.
    */
+  fun getStableRequestCodeForActivityKey(activityKey: String, templateId: Long = 0L): Int {
+    val key = if (activityKey.isNotBlank()) activityKey else "template_$templateId"
+    val hash = (key.hashCode() and 0x7fffffff) % 30000
+    return REQUEST_CODE_TIMETABLE_BASE + hash
+  }
+
+  fun getStablePreReminderRequestCodeForActivityKey(activityKey: String, templateId: Long = 0L): Int {
+    val key = if (activityKey.isNotBlank()) activityKey else "template_$templateId"
+    val hash = (key.hashCode() and 0x7fffffff) % 30000
+    return REQUEST_CODE_PRE_REMINDER_BASE + hash
+  }
+
+  private fun cancelExactAlarmByCode(context: Context, requestCode: Int, action: String) {
+    try {
+      val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+      val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+      } else {
+        PendingIntent.FLAG_UPDATE_CURRENT
+      }
+      val intent = Intent(context, WakeUpAlarmReceiver::class.java).apply {
+        this.action = action
+      }
+      val pendingIntent = PendingIntent.getBroadcast(context, requestCode, intent, flags)
+      alarmManager.cancel(pendingIntent)
+      pendingIntent.cancel()
+    } catch (_: Exception) {}
+  }
+
+  /**
+   * Cancels old legacy template-id alarms (slots 1..200) to clean up stale duplicate alarms after migration.
+   */
+  fun cancelAllLegacyTemplateAlarms(context: Context) {
+    try {
+      for (id in 1L..200L) {
+        val legacyCode = (REQUEST_CODE_TIMETABLE_BASE + (id % 50000)).toInt()
+        val legacyPreCode = (REQUEST_CODE_PRE_REMINDER_BASE + (id % 50000)).toInt()
+        cancelExactAlarmByCode(context, legacyCode, ACTION_TIMETABLE_REMINDER)
+        cancelExactAlarmByCode(context, legacyPreCode, ACTION_SMART_PRE_REMINDER)
+      }
+      Log.d("AlarmScheduler", "Cancelled all legacy template-id alarms")
+    } catch (e: Exception) {
+      Log.e("AlarmScheduler", "Error cancelling legacy template alarms", e)
+    }
+  }
+
   /**
    * Schedules an exact system alarm for a timetable activity, plus an optional smart pre-reminder.
-   * Uses stable unique RequestCode derived from template.id to prevent duplicate alarms.
+   * Uses stable unique RequestCode derived from template.activityKey to prevent duplicate alarms.
+   * Old legacy template-id alarms are cleaned up automatically.
    * Compatible with Android lock-screen and background Doze mode.
    */
   fun scheduleTimetableAlarm(
@@ -305,13 +353,26 @@ object AlarmScheduler {
     if (!template.isActive) return
     createNotificationChannels(context)
 
+    // 1. Cancel old legacy template-id alarm if requestCode differed
+    val legacyCode = (REQUEST_CODE_TIMETABLE_BASE + (template.id % 50000)).toInt()
+    val stableCode = getStableRequestCodeForActivityKey(template.activityKey, template.id)
+    if (legacyCode != stableCode) {
+      cancelExactAlarmByCode(context, legacyCode, ACTION_TIMETABLE_REMINDER)
+    }
+
+    val legacyPreCode = (REQUEST_CODE_PRE_REMINDER_BASE + (template.id % 50000)).toInt()
+    val stablePreCode = getStablePreReminderRequestCodeForActivityKey(template.activityKey, template.id)
+    if (legacyPreCode != stablePreCode) {
+      cancelExactAlarmByCode(context, legacyPreCode, ACTION_SMART_PRE_REMINDER)
+    }
+
     val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
     val triggerMillis = calculateNextActivityMillis(template.timeMinutes, template.daysMask)
-    val requestCode = (REQUEST_CODE_TIMETABLE_BASE + (template.id % 50000)).toInt()
 
     val intent = Intent(context, WakeUpAlarmReceiver::class.java).apply {
       action = ACTION_TIMETABLE_REMINDER
       putExtra(EXTRA_TEMPLATE_ID, template.id)
+      putExtra(EXTRA_ACTIVITY_KEY, template.activityKey)
       putExtra(EXTRA_ACTIVITY_NAME, template.name)
       putExtra(EXTRA_TIME_MINUTES, template.timeMinutes)
       putExtra(EXTRA_CATEGORY, template.category)
@@ -327,7 +388,7 @@ object AlarmScheduler {
 
     val pendingIntent = PendingIntent.getBroadcast(
       context,
-      requestCode,
+      stableCode,
       intent,
       flags
     )
@@ -337,16 +398,16 @@ object AlarmScheduler {
     }
     val showPendingIntent = PendingIntent.getActivity(
       context,
-      requestCode,
+      stableCode,
       showIntent,
       flags
     )
 
     try {
-      // 1. Exact-time alarm (Never disabled or weakened)
+      // Exact-time alarm (Never disabled or weakened)
       val clockInfo = AlarmManager.AlarmClockInfo(triggerMillis, showPendingIntent)
       alarmManager.setAlarmClock(clockInfo, pendingIntent)
-      Log.d("AlarmScheduler", "Scheduled timetable alarm for '${template.name}' at $triggerMillis (${java.util.Date(triggerMillis)})")
+      Log.d("AlarmScheduler", "Scheduled timetable alarm for '${template.name}' [key=${template.activityKey}, code=$stableCode] at $triggerMillis (${java.util.Date(triggerMillis)})")
     } catch (e: SecurityException) {
       Log.e("AlarmScheduler", "Exact alarm permission missing, falling back to setAndAllowWhileIdle", e)
       alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMillis, pendingIntent)
@@ -354,14 +415,14 @@ object AlarmScheduler {
       Log.e("AlarmScheduler", "Failed to schedule timetable alarm", e)
     }
 
-    // 2. Feature 2: Smart Pre-Reminder (e.g. 5, 10, 15, 30 mins before)
+    // Feature 2: Smart Pre-Reminder (e.g. 5, 10, 15, 30 mins before)
     if (smartReminderMinutes > 0) {
       val preTriggerMillis = triggerMillis - (smartReminderMinutes * 60 * 1000L)
       if (preTriggerMillis > System.currentTimeMillis()) {
-        val preRequestCode = (REQUEST_CODE_PRE_REMINDER_BASE + (template.id % 50000)).toInt()
         val preIntent = Intent(context, WakeUpAlarmReceiver::class.java).apply {
           action = ACTION_SMART_PRE_REMINDER
           putExtra(EXTRA_TEMPLATE_ID, template.id)
+          putExtra(EXTRA_ACTIVITY_KEY, template.activityKey)
           putExtra(EXTRA_ACTIVITY_NAME, template.name)
           putExtra(EXTRA_TIME_MINUTES, template.timeMinutes)
           putExtra(EXTRA_PRE_MINUTES, smartReminderMinutes)
@@ -371,7 +432,7 @@ object AlarmScheduler {
         }
         val prePendingIntent = PendingIntent.getBroadcast(
           context,
-          preRequestCode,
+          stablePreCode,
           preIntent,
           flags
         )
@@ -387,35 +448,24 @@ object AlarmScheduler {
 
   /**
    * Cancels a previously scheduled alarm (and any pre-reminder) for a timetable activity.
+   * Cancels BOTH legacy templateId slot and stable activityKey slot.
    */
-  fun cancelTimetableAlarm(context: Context, templateId: Long) {
-    val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+  fun cancelTimetableAlarm(context: Context, templateId: Long, activityKey: String? = null) {
+    // 1. Cancel legacy exact-time and pre-reminder alarms
+    val legacyCode = (REQUEST_CODE_TIMETABLE_BASE + (templateId % 50000)).toInt()
+    val legacyPreCode = (REQUEST_CODE_PRE_REMINDER_BASE + (templateId % 50000)).toInt()
+    cancelExactAlarmByCode(context, legacyCode, ACTION_TIMETABLE_REMINDER)
+    cancelExactAlarmByCode(context, legacyPreCode, ACTION_SMART_PRE_REMINDER)
 
-    val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-    } else {
-      PendingIntent.FLAG_UPDATE_CURRENT
+    // 2. Cancel stable activityKey exact-time and pre-reminder alarms
+    if (!activityKey.isNullOrBlank()) {
+      val stableCode = getStableRequestCodeForActivityKey(activityKey, templateId)
+      val stablePreCode = getStablePreReminderRequestCodeForActivityKey(activityKey, templateId)
+      cancelExactAlarmByCode(context, stableCode, ACTION_TIMETABLE_REMINDER)
+      cancelExactAlarmByCode(context, stablePreCode, ACTION_SMART_PRE_REMINDER)
     }
 
-    // 1. Cancel exact-time alarm
-    val requestCode = (REQUEST_CODE_TIMETABLE_BASE + (templateId % 50000)).toInt()
-    val intent = Intent(context, WakeUpAlarmReceiver::class.java).apply {
-      action = ACTION_TIMETABLE_REMINDER
-    }
-    val pendingIntent = PendingIntent.getBroadcast(context, requestCode, intent, flags)
-    alarmManager.cancel(pendingIntent)
-    pendingIntent.cancel()
-
-    // 2. Cancel smart pre-reminder alarm
-    val preRequestCode = (REQUEST_CODE_PRE_REMINDER_BASE + (templateId % 50000)).toInt()
-    val preIntent = Intent(context, WakeUpAlarmReceiver::class.java).apply {
-      action = ACTION_SMART_PRE_REMINDER
-    }
-    val prePendingIntent = PendingIntent.getBroadcast(context, preRequestCode, preIntent, flags)
-    alarmManager.cancel(prePendingIntent)
-    prePendingIntent.cancel()
-
-    Log.d("AlarmScheduler", "Cancelled timetable alarm & pre-reminder for templateId: $templateId")
+    Log.d("AlarmScheduler", "Cancelled timetable alarm & pre-reminder for templateId: $templateId, key: $activityKey")
   }
 
   fun cancelAllTimetableAlarms(context: Context) {
@@ -424,8 +474,9 @@ object AlarmScheduler {
         val db = LifeTrackerDatabase.getDatabase(context)
         val activeTemplates = db.routineDao().getActiveTemplatesSync()
         for (template in activeTemplates) {
-          cancelTimetableAlarm(context, template.id)
+          cancelTimetableAlarm(context, template.id, template.activityKey)
         }
+        cancelAllLegacyTemplateAlarms(context)
       } catch (e: Exception) {
         Log.e("AlarmScheduler", "Error cancelling timetable alarms", e)
       }
@@ -510,6 +561,7 @@ object AlarmScheduler {
     createNotificationChannels(context)
     CoroutineScope(Dispatchers.IO).launch {
       try {
+        cancelAllLegacyTemplateAlarms(context)
         val db = LifeTrackerDatabase.getDatabase(context)
         val settings = db.userSettingsDao().getSettingsSync()
         val smartReminder = settings?.smartReminderMinutes ?: 0

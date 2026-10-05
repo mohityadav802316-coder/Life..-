@@ -1,5 +1,6 @@
 package com.example.data.repository
 
+import android.content.Context
 import com.example.data.db.DailyNoteDao
 import com.example.data.db.DailySnapshotDao
 import com.example.data.db.GoalDao
@@ -27,6 +28,7 @@ import com.example.data.model.RoutineTemplateEntity
 import com.example.data.model.TaskPriority
 import com.example.data.model.TaskStatus
 import com.example.data.model.UserSettingsEntity
+import com.example.util.RoutineUtils
 import com.example.util.TimeUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -50,6 +52,8 @@ class LifeTrackerRepository(private val database: LifeTrackerDatabase) {
   val musicDao: com.example.data.db.MusicDao = database.musicDao()
   val dailyChallengeDao: com.example.data.db.DailyChallengeDao = database.dailyChallengeDao()
   val shortContentDao: com.example.data.db.ShortContentDao = database.shortContentDao()
+  val expenseDao: com.example.data.db.ExpenseDao = database.expenseDao()
+  val strictLockDao: com.example.data.db.StrictLockDao = database.strictLockDao()
 
   /**
    * Safe SQLite write with automatic retry to guarantee persistence
@@ -82,26 +86,13 @@ class LifeTrackerRepository(private val database: LifeTrackerDatabase) {
       safeDbWrite { userSettingsDao.insertOrUpdate(settings) }
     }
 
-    // Seed master routine if empty
+    // User Requirement: On new install / empty database, do NOT automatically create/seed/insert default routines.
+    // The routine section starts completely blank. User will add routines manually from Settings.
+    // If existing routines exist (from an existing user), preserve and deduplicate them.
     val routineCount = routineDao.countRoutineTemplates()
-    if (routineCount == 0) {
-      val defaultRoutines = listOf(
-        RoutineTemplateEntity(name = "Wake Up, Hydration & Cold Water", timeMinutes = 300, category = "Morning", orderIndex = 0),
-        RoutineTemplateEntity(name = "Morning Workout & Flexibility", timeMinutes = 330, category = "Fitness", orderIndex = 1),
-        RoutineTemplateEntity(name = "Shower & Nutritious Breakfast", timeMinutes = 390, category = "Health", orderIndex = 2),
-        RoutineTemplateEntity(name = "Day Planning & Top 3 Priorities", timeMinutes = 450, category = "Deep Work", orderIndex = 3),
-        RoutineTemplateEntity(name = "Deep Focus Block 1", timeMinutes = 510, category = "Deep Work", orderIndex = 4),
-        RoutineTemplateEntity(name = "Review & Communication Sync", timeMinutes = 690, category = "Deep Work", orderIndex = 5),
-        RoutineTemplateEntity(name = "Wholesome Lunch & Outdoor Walk", timeMinutes = 750, category = "Health", orderIndex = 6),
-        RoutineTemplateEntity(name = "Deep Focus Block 2", timeMinutes = 840, category = "Deep Work", orderIndex = 7),
-        RoutineTemplateEntity(name = "Skill Practice & Reading", timeMinutes = 990, category = "Learning", orderIndex = 8),
-        RoutineTemplateEntity(name = "Evening Fitness / Outdoor Cardio", timeMinutes = 1080, category = "Fitness", orderIndex = 9),
-        RoutineTemplateEntity(name = "Dinner & Mindful Decompression", timeMinutes = 1170, category = "Health", orderIndex = 10),
-        RoutineTemplateEntity(name = "Reflection & Daily Review", timeMinutes = 1245, category = "Mindset", orderIndex = 11),
-        RoutineTemplateEntity(name = "Night Wind-Down & Screens Off", timeMinutes = 1290, category = "Rest", orderIndex = 12),
-        RoutineTemplateEntity(name = "Sleep Prep & Lights Out", timeMinutes = 1320, category = "Rest", orderIndex = 13)
-      )
-      safeDbWrite { routineDao.insertRoutineTemplates(defaultRoutines) }
+    if (routineCount > 0) {
+      // Ensure existing routine rows are deduplicated and day_tasks re-linked
+      deduplicateRoutineTemplatesAndRelinkDayTasks()
     }
 
     // Ensure fixed default person "मैं (स्वयं)" exists
@@ -267,6 +258,69 @@ class LifeTrackerRepository(private val database: LifeTrackerDatabase) {
 
   suspend fun getRoutineTemplateById(id: Long): RoutineTemplateEntity? = withContext(Dispatchers.IO) {
     routineDao.getRoutineTemplateById(id)
+  }
+
+  suspend fun getRoutineTemplateByActivityKey(key: String): RoutineTemplateEntity? = withContext(Dispatchers.IO) {
+    routineDao.getRoutineTemplateByActivityKey(key)
+  }
+
+  /**
+   * Startup cleanup to ensure no duplicate default+custom routine rows exist.
+   * If duplicates exist for the same logical activity key, preserves the user's
+   * custom/active row and completed task history, and re-links day_tasks.
+   */
+  suspend fun deduplicateRoutineTemplatesAndRelinkDayTasks() = withContext(Dispatchers.IO) {
+    safeDbWrite {
+      val allTemplates = routineDao.getAllRoutineTemplatesSync()
+      if (allTemplates.isEmpty()) return@safeDbWrite
+
+      val groups = mutableMapOf<String, MutableList<RoutineTemplateEntity>>()
+      for (template in allTemplates) {
+        val key = if (template.activityKey.isNotBlank()) {
+          template.activityKey
+        } else {
+          RoutineUtils.resolveActivityKey(template.name)
+        }
+        groups.getOrPut(key) { mutableListOf() }.add(template)
+      }
+
+      val usedKeys = mutableSetOf<String>()
+      for ((key, templates) in groups) {
+        if (templates.size > 1) {
+          // Multiple rows for same logical activity!
+          // Pick survivor: prefer active row, custom notes/time, or highest id (user-customized row)
+          val survivor = templates.maxByOrNull { t ->
+            var score = 0
+            if (t.isActive) score += 20
+            if (t.notes.isNotBlank()) score += 10
+            if (t.id > 14) score += 5
+            score
+          } ?: templates.last()
+
+          val finalKey = if (usedKeys.contains(key)) "${key}_${survivor.id}" else key
+          usedKeys.add(finalKey)
+
+          if (survivor.activityKey != finalKey) {
+            routineDao.updateRoutineTemplate(survivor.copy(activityKey = finalKey))
+          }
+
+          // Re-link all day_tasks from duplicates to the surviving template row, preserving history
+          for (duplicate in templates) {
+            if (duplicate.id != survivor.id) {
+              taskDao.reassignTemplateId(duplicate.id, survivor.id)
+              routineDao.deleteRoutineTemplateById(duplicate.id)
+            }
+          }
+        } else {
+          val single = templates.first()
+          val finalKey = if (usedKeys.contains(key)) "${key}_${single.id}" else key
+          usedKeys.add(finalKey)
+          if (single.activityKey != finalKey) {
+            routineDao.updateRoutineTemplate(single.copy(activityKey = finalKey))
+          }
+        }
+      }
+    }
   }
 
   suspend fun insertRoutineTemplate(item: RoutineTemplateEntity): Long = withContext(Dispatchers.IO) {
@@ -945,6 +999,24 @@ class LifeTrackerRepository(private val database: LifeTrackerDatabase) {
     userSettingsDao.insertOrUpdate(updated)
   }
 
+  fun getAllStrictLockEvents(): kotlinx.coroutines.flow.Flow<List<com.example.data.model.StrictLockEventEntity>> =
+    strictLockDao.getAllEvents()
+
+  fun getRecentStrictLockEvents(): kotlinx.coroutines.flow.Flow<List<com.example.data.model.StrictLockEventEntity>> =
+    strictLockDao.getRecentEvents()
+
+  suspend fun countStrictLockEvents(): Int = withContext(Dispatchers.IO) {
+    try {
+      strictLockDao.countEvents()
+    } catch (e: Exception) {
+      0
+    }
+  }
+
+  suspend fun recordStrictLockEvent(event: com.example.data.model.StrictLockEventEntity): Long = safeDbWrite {
+    strictLockDao.insertEvent(event)
+  }.getOrDefault(-1L)
+
   // --- SYSTEM-WIDE OLED BLACK SCREEN MODE METHODS ---
 
   suspend fun updateBlackScreenEnabled(isEnabled: Boolean) = safeDbWrite {
@@ -1010,5 +1082,182 @@ class LifeTrackerRepository(private val database: LifeTrackerDatabase) {
   suspend fun updateBlackScreenRestoreAfterReboot(restore: Boolean) = safeDbWrite {
     val current = userSettingsDao.getSettingsDirect() ?: UserSettingsEntity(anchorDate = TimeUtils.getTodayDateString())
     userSettingsDao.insertOrUpdate(current.copy(blackScreenRestoreAfterReboot = restore))
+  }
+
+  // --- DATA RESET & EXISTING USER DATA DETECTION ---
+
+  /**
+   * Determines whether the app has meaningful existing user data (tasks, notes, reflections, snapshots, etc.)
+   */
+  suspend fun hasExistingUserData(context: Context): Boolean = withContext(Dispatchers.IO) {
+    try {
+      val dbFile = context.getDatabasePath("life_tracker_db")
+      if (!dbFile.exists() || dbFile.length() == 0L) return@withContext false
+
+      val tasks = taskDao.getAllTasksSync().size
+      val routines = routineDao.countRoutineTemplates()
+      val snapshots = dailySnapshotDao.getAllSnapshotsSync().size
+      val notes = dailyNoteDao.getAllNotesSync().size
+      val reflections = reflectionDao.getAllReflectionsSync().size
+      tasks > 0 || routines > 0 || snapshots > 0 || notes > 0 || reflections > 0
+    } catch (_: Exception) {
+      false
+    }
+  }
+
+  /**
+   * Production-safe app reset to start as a fresh user.
+   * Takes a local safety backup first, clears all Room tables, and re-initializes pristine default routines.
+   */
+  suspend fun resetAppToFreshState(context: Context, todayDate: String): Result<Unit> = withContext(Dispatchers.IO) {
+    try {
+      // 1. Create a local safety backup snapshot before resetting
+      com.example.backup.RestoreManager.createLocalSafetyBackup(context)
+
+      // 2. Clear all Room entity tables
+      database.clearAllTables()
+
+      // 3. Re-initialize defaults (default 11 routines, default settings)
+      initializeDefaultsIfNeeded(todayDate)
+
+      // 4. Update system alarms and sync services
+      try {
+        com.example.alarm.AlarmScheduler.createNotificationChannels(context)
+        com.example.alarm.AlarmScheduler.rescheduleAllTimetableAlarms(context)
+        com.example.focus.FocusModeManager.onBootOrScheduleChange(context)
+        com.example.blackscreen.BlackScreenManager.syncServiceState(context)
+      } catch (_: Exception) {}
+
+      com.example.backup.BackupPreferences.setFirstLaunchHandled(context, true)
+      Result.success(Unit)
+    } catch (e: Exception) {
+      Result.failure(e)
+    }
+  }
+
+  // =========================================================
+  // EXPENSE DIARY REPOSITORY METHODS
+  // =========================================================
+
+  suspend fun initializeExpenseDefaultsIfNeeded() = withContext(Dispatchers.IO) {
+    try {
+      val existingCategories = expenseDao.getAllCategoriesSync()
+      if (existingCategories.isEmpty()) {
+        expenseDao.insertCategories(com.example.data.model.ExpenseDefaults.DEFAULT_CATEGORIES)
+      }
+      val existingChips = expenseDao.getAllQuickChipsSync()
+      if (existingChips.isEmpty()) {
+        expenseDao.insertQuickChips(com.example.data.model.ExpenseDefaults.DEFAULT_QUICK_CHIPS)
+      }
+    } catch (_: Exception) {}
+  }
+
+  fun getAllExpenses(): Flow<List<com.example.data.model.ExpenseEntity>> =
+    expenseDao.getAllExpenses()
+
+  fun getTodayExpenses(date: String): Flow<List<com.example.data.model.ExpenseEntity>> =
+    expenseDao.getExpensesForDate(date)
+
+  fun getTodayTotalSpend(date: String): Flow<Double> =
+    expenseDao.getTodayTotalFlow(date)
+
+  fun getExpensesBetweenDates(startDate: String, endDate: String): Flow<List<com.example.data.model.ExpenseEntity>> =
+    expenseDao.getExpensesBetweenDates(startDate, endDate)
+
+  suspend fun getExpensesBetweenDatesSync(startDate: String, endDate: String): List<com.example.data.model.ExpenseEntity> =
+    expenseDao.getExpensesBetweenDatesSync(startDate, endDate)
+
+  suspend fun addExpense(expense: com.example.data.model.ExpenseEntity): Result<Long> = safeDbWrite {
+    val id = expenseDao.insertExpense(expense)
+    try {
+      expenseDao.bumpQuickChipUsage(expense.note, expense.amount)
+    } catch (_: Exception) {}
+    id
+  }
+
+  suspend fun updateExpense(expense: com.example.data.model.ExpenseEntity): Result<Unit> = safeDbWrite {
+    expenseDao.updateExpense(expense)
+  }
+
+  suspend fun deleteExpense(expense: com.example.data.model.ExpenseEntity): Result<Unit> = safeDbWrite {
+    expenseDao.deleteExpense(expense)
+  }
+
+  suspend fun deleteExpenseById(id: Long): Result<Unit> = safeDbWrite {
+    expenseDao.deleteExpenseById(id)
+  }
+
+  fun getAllQuickChips(): Flow<List<com.example.data.model.ExpenseQuickChipEntity>> =
+    expenseDao.getAllQuickChips()
+
+  fun getAllExpenseCategories(): Flow<List<com.example.data.model.ExpenseCategoryEntity>> =
+    expenseDao.getAllCategories()
+
+  suspend fun getAllExpenseCategoriesSync(): List<com.example.data.model.ExpenseCategoryEntity> =
+    expenseDao.getAllCategoriesSync()
+
+  suspend fun updateExpenseCategory(category: com.example.data.model.ExpenseCategoryEntity): Result<Unit> = safeDbWrite {
+    expenseDao.updateCategory(category)
+  }
+
+  suspend fun deleteExpenseCategory(category: com.example.data.model.ExpenseCategoryEntity): Result<Unit> = safeDbWrite {
+    expenseDao.deleteCategory(category)
+  }
+
+  suspend fun updateQuickChip(chip: com.example.data.model.ExpenseQuickChipEntity): Result<Unit> = safeDbWrite {
+    expenseDao.updateQuickChip(chip)
+  }
+
+  // --- Recurring Expenses ---
+  fun getAllRecurringExpenses(): Flow<List<com.example.data.model.RecurringExpenseEntity>> =
+    expenseDao.getAllRecurringExpenses()
+
+  suspend fun getAllRecurringExpensesSync(): List<com.example.data.model.RecurringExpenseEntity> =
+    expenseDao.getAllRecurringExpensesSync()
+
+  suspend fun addRecurringExpense(recurring: com.example.data.model.RecurringExpenseEntity): Result<Long> = safeDbWrite {
+    expenseDao.insertRecurringExpense(recurring)
+  }
+
+  suspend fun updateRecurringExpense(recurring: com.example.data.model.RecurringExpenseEntity): Result<Unit> = safeDbWrite {
+    expenseDao.updateRecurringExpense(recurring)
+  }
+
+  suspend fun deleteRecurringExpense(recurring: com.example.data.model.RecurringExpenseEntity): Result<Unit> = safeDbWrite {
+    expenseDao.deleteRecurringExpense(recurring)
+  }
+
+  /**
+   * Checks all recurring expenses against today's date.
+   * If today's day of month >= recurring.dayOfMonth and not added for current month,
+   * automatically generates the expense entry!
+   */
+  suspend fun checkAndTriggerRecurringExpenses(todayDateStr: String): List<com.example.data.model.ExpenseEntity> = withContext(Dispatchers.IO) {
+    val addedExpenses = mutableListOf<com.example.data.model.ExpenseEntity>()
+    try {
+      val recurringList = expenseDao.getAllRecurringExpensesSync().filter { it.isEnabled }
+      val currentMonth = todayDateStr.substring(0, 7.coerceAtMost(todayDateStr.length)) // "YYYY-MM"
+      val todayDay = todayDateStr.split("-").getOrNull(2)?.toIntOrNull() ?: 1
+
+      for (rec in recurringList) {
+        if (rec.lastAddedMonth != currentMonth && todayDay >= rec.dayOfMonth) {
+          val expense = com.example.data.model.ExpenseEntity(
+            amount = rec.amount,
+            note = "${rec.title} (आवर्ती)",
+            category = rec.category,
+            categoryEmoji = rec.categoryEmoji,
+            categoryColorHex = rec.categoryColorHex,
+            date = todayDateStr,
+            time = "09:00 AM",
+            timestamp = System.currentTimeMillis(),
+            mood = "😌"
+          )
+          expenseDao.insertExpense(expense)
+          expenseDao.updateRecurringExpense(rec.copy(lastAddedMonth = currentMonth))
+          addedExpenses.add(expense)
+        }
+      }
+    } catch (_: Exception) {}
+    addedExpenses
   }
 }
