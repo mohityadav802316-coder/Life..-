@@ -1,0 +1,77 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --bg-obsidian: #14120E;
+    --bg-elevated: #1A1713;
+    --bg-card: #221E18;
+    --bg-surface-elevated: #2B251E;
+    --bg-surface-highlight: #373027;
+    --border-obsidian: #383126;
+    --border-subtle: #27221A;
+    --gold-brass: #C9A15B;
+    --gold-highlight: #DFBE7E;
+    --gold-dark: #8B6F39;
+    --gold-muted: #5A4826;
+    --text-offwhite: #F3EEDD;
+    --text-parchment: #BDB49F;
+    --text-muted: #857D6C;
+    --sage-green: #7D9B76;
+    --dusty-rose: #C87D7D;
+    --muted-plum: #96789C;
+    --ice-blue: #7AA2BA;
+  }
+
+  body {
+    background-color: var(--bg-obsidian);
+    color: var(--text-offwhite);
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    overflow-x: hidden;
+  }
+}
+
+/* Luxury Watch Aesthetics */
+.font-cinzel {
+  font-family: 'Cinzel', serif;
+}
+
+.gold-gradient-text {
+  background: linear-gradient(135deg, #DFBE7E 0%, #C9A15B 50%, #8B6F39 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.gold-gradient-border {
+  border-image: linear-gradient(to bottom right, #DFBE7E, #383126, #8B6F39) 1;
+}
+
+.dial-shadow {
+  box-shadow: 0 0 25px rgba(201, 161, 91, 0.12), inset 0 0 15px rgba(0, 0, 0, 0.6);
+}
+
+.gold-glow {
+  box-shadow: 0 0 16px rgba(201, 161, 91, 0.25);
+}
+
+.card-gloss {
+  background: linear-gradient(180deg, rgba(34, 30, 24, 0.95) 0%, rgba(26, 23, 19, 0.98) 100%);
+}
+
+/* Custom Scrollbar for sleek UI */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: #14120E;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #383126;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #C9A15B;
+}
